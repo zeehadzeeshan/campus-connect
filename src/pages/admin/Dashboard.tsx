@@ -1,4 +1,3 @@
-
 import { useEffect, useState } from 'react';
 import {
     Users,
@@ -8,15 +7,32 @@ import {
     CalendarCheck
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { mockData } from '@/data/mockData';
+import { api } from '@/services/api';
+import { toast } from 'sonner';
 
 const Dashboard = () => {
-    const [stats, setStats] = useState(mockData.getStats());
+    const [stats, setStats] = useState({
+        totalStudents: 0,
+        totalTeachers: 0,
+        totalBatches: 0,
+        totalSubjects: 0,
+        todaySessions: 0
+    });
+    const [isLoading, setIsLoading] = useState(true);
 
     useEffect(() => {
-        // In a real app, this would fetch from API
-        // For now, we just refresh stats from mockData on mount
-        setStats(mockData.getStats());
+        const fetchStats = async () => {
+            setIsLoading(true);
+            try {
+                const data = await api.getStats();
+                setStats(data);
+            } catch (error) {
+                toast.error("Failed to load dashboard stats");
+            } finally {
+                setIsLoading(false);
+            }
+        };
+        fetchStats();
     }, []);
 
     const statCards = [
@@ -49,7 +65,7 @@ const Dashboard = () => {
             bg: 'bg-amber-500/10',
         },
         {
-            title: "Today's Sessions",
+            title: "Total Routines",
             value: stats.todaySessions,
             icon: CalendarCheck,
             color: 'text-rose-500',
@@ -78,7 +94,9 @@ const Dashboard = () => {
                             </div>
                         </CardHeader>
                         <CardContent>
-                            <div className="text-2xl font-bold">{stat.value}</div>
+                            <div className="text-2xl font-bold">
+                                {isLoading ? "..." : stat.value}
+                            </div>
                             <p className="text-xs text-muted-foreground mt-1">
                                 Active records
                             </p>

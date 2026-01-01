@@ -1,6 +1,5 @@
-
-import { useState } from 'react';
-import { CalendarDays, Trash2 } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
     Table,
@@ -10,25 +9,42 @@ import {
     TableHeader,
     TableRow,
 } from "@/components/ui/table";
-import { mockData, Routine } from '@/data/mockData';
+import { api } from '@/services/api';
 import { useToast } from '@/hooks/use-toast';
 
 const RoutineManagement = () => {
     const { toast } = useToast();
-    const [routines, setRoutines] = useState<Routine[]>(mockData.getRoutines());
+    const [routines, setRoutines] = useState<any[]>([]);
+    const [isLoading, setIsLoading] = useState(true);
 
-    const handleDelete = (id: string) => {
-        if (confirm('Are you sure you want to delete this routine?')) {
-            mockData.deleteRoutine(id);
-            setRoutines(mockData.getRoutines());
-            toast({ title: 'Routine deleted' });
+    const fetchData = async () => {
+        setIsLoading(true);
+        try {
+            const data = await api.getRoutines();
+            setRoutines(data || []);
+        } catch (error) {
+            console.error("Failed to fetch routines", error);
+            toast({ title: 'Error', description: 'Failed to load routines', variant: 'destructive' });
+        } finally {
+            setIsLoading(false);
         }
     };
 
-    const getSubjectName = (id: string) => mockData.getSubjects().find(s => s.id === id)?.name || id;
-    const getTeacherName = (id: string) => mockData.getUsers().find(u => u.id === id)?.name || id;
-    const getBatchName = (id: string) => mockData.getBatches().find(b => b.id === id)?.name || id;
-    const getSectionName = (id: string) => mockData.getSections().find(s => s.id === id)?.name || id;
+    useEffect(() => {
+        fetchData();
+    }, []);
+
+    const handleDelete = async (id: string) => {
+        if (confirm('Are you sure you want to delete this routine?')) {
+            try {
+                await api.deleteResource('routines', id);
+                toast({ title: 'Routine deleted' });
+                fetchData();
+            } catch (e) {
+                toast({ title: 'Error', description: 'Failed to delete routine', variant: 'destructive' });
+            }
+        }
+    };
 
     return (
         <div className="space-y-6">
@@ -55,12 +71,19 @@ const RoutineManagement = () => {
                     <TableBody>
                         {routines.map((routine) => (
                             <TableRow key={routine.id}>
-                                <TableCell className="font-medium">{routine.day}</TableCell>
-                                <TableCell>{routine.startTime} - {routine.endTime}</TableCell>
-                                <TableCell>{getSubjectName(routine.subjectId)}</TableCell>
-                                <TableCell>{getTeacherName(routine.teacherId)}</TableCell>
-                                <TableCell>{getBatchName(routine.batchId)} - {getSectionName(routine.sectionId)}</TableCell>
-                                <TableCell>{routine.roomId || 'N/A'}</TableCell>
+                                <TableCell className="font-medium">{routine.day_of_week}</TableCell>
+                                <TableCell>{routine.start_time?.slice(0, 5)} - {routine.end_time?.slice(0, 5)}</TableCell>
+                                <TableCell>
+                                    <div className="flex flex-col">
+                                        <span>{routine.subject?.name}</span>
+                                        <span className="text-xs text-muted-foreground">{routine.subject?.code}</span>
+                                    </div>
+                                </TableCell>
+                                <TableCell>{routine.teacher?.name}</TableCell>
+                                <TableCell>
+                                    {routine.subject?.section?.batch?.name} - {routine.subject?.section?.name}
+                                </TableCell>
+                                <TableCell>{routine.room_id || 'N/A'}</TableCell>
                                 <TableCell className="text-right">
                                     <Button variant="ghost" size="sm" onClick={() => handleDelete(routine.id)}>
                                         <Trash2 className="w-4 h-4 text-destructive" />
@@ -68,10 +91,17 @@ const RoutineManagement = () => {
                                 </TableCell>
                             </TableRow>
                         ))}
-                        {routines.length === 0 && (
+                        {routines.length === 0 && !isLoading && (
                             <TableRow>
                                 <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
                                     No routines found.
+                                </TableCell>
+                            </TableRow>
+                        )}
+                        {isLoading && (
+                            <TableRow>
+                                <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                                    Loading schedules...
                                 </TableCell>
                             </TableRow>
                         )}

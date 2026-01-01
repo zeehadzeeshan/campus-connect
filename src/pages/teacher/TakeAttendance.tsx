@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useAuth } from "@/contexts/AuthContext";
-import { getTeachers, batches, sections, subjects, getStudents, attendanceRecords, routines } from "@/data/mockData";
+import { api } from "@/services/api";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -13,55 +13,66 @@ import { useNavigate } from "react-router-dom";
 const TakeAttendance = () => {
     const { user } = useAuth();
     const navigate = useNavigate();
-    const teacher = getTeachers().find(t => t.email === user?.email);
-    const assignedClasses = teacher?.assignedSubjects || [];
-
-    // ENFORCE ROUTINE: Filter classes to only those scheduled for TODAY
-    const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    const today = days[new Date().getDay()];
-
-    // Find routines for this teacher for today
-    const todayRoutines = routines.filter(r => r.teacherId === teacher?.id && r.day === today);
-
-    // Filter assigned classes to only those in today's routine
-    const availableClasses = assignedClasses.filter(ac =>
-        todayRoutines.some(r => r.subjectId === ac.subjectId && r.batchId === ac.batchId && r.sectionId === ac.sectionId)
-    );
 
     // Steps: 'select' -> 'camera' -> 'verify' -> 'success'
     const [step, setStep] = useState<'select' | 'camera' | 'verify' | 'success'>('select');
-    const [selectedClassId, setSelectedClassId] = useState("");
-    const [attendanceData, setAttendanceData] = useState<{ studentId: string; status: 'present' | 'absent' }[]>([]);
+    const [routines, setRoutines] = useState<any[]>([]);
+    const [selectedRoutineId, setSelectedRoutineId] = useState("");
+    const [attendanceData, setAttendanceData] = useState<{ studentId: string; status: 'present' | 'absent'; name: string; student_id: string }[]>([]);
+    const [isLoading, setIsLoading] = useState(true);
 
-    const getBatchName = (id: string) => batches.find(b => b.id === id)?.name || id;
-    const getSubjectName = (id: string) => subjects.find(s => s.id === id)?.name || id;
-    const getSectionName = (id: string) => sections.find(s => s.id === id)?.name || id;
+    const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const today = days[new Date().getDay()];
 
-    const handleStartCamera = () => {
-        if (!selectedClassId) {
+    useEffect(() => {
+        const fetchRoutines = async () => {
+            if (!user?.id) return;
+            setIsLoading(true);
+            try {
+                // Fetch today's routine for this teacher
+                const data = await api.getRoutines({ teacher_id: user.id, day: today });
+                setRoutines(data || []);
+            } catch (e) {
+                toast.error("Failed to load routines");
+            } finally {
+                setIsLoading(false);
+            }
+        };
+        fetchRoutines();
+    }, [user?.id]);
+
+    const handleStartCamera = async () => {
+        if (!selectedRoutineId) {
             toast.error("Please select a class first");
             return;
         }
+
+        const routine = routines.find(r => r.id === selectedRoutineId);
+        if (!routine) return;
+
         setStep('camera');
 
-        // Simulate scanning process
-        setTimeout(() => {
-            const selectedClass = assignedClasses.find(c => c.id === selectedClassId);
-            if (!selectedClass) return;
+        // Fetch students for this section
+        try {
+            const students = await api.getStudentsBySection(routine.subject?.section_id);
 
-            const students = getStudents().filter(
-                s => s.batchId === selectedClass.batchId && s.sectionId === selectedClass.sectionId && s.status === 'active'
-            );
+            // Simulate scanning process
+            setTimeout(() => {
+                // Randomly mark some as present for the demo
+                const initialAttendance = students.map((s: any) => ({
+                    studentId: s.id,
+                    name: s.profile?.name || "Unknown",
+                    student_id: s.student_id,
+                    status: (Math.random() > 0.2 ? 'present' : 'absent') as 'present' | 'absent'
+                }));
 
-            // Randomly mark some as present for the demo
-            const initialAttendance = students.map(s => ({
-                studentId: s.id,
-                status: (Math.random() > 0.2 ? 'present' : 'absent') as 'present' | 'absent'
-            }));
-
-            setAttendanceData(initialAttendance);
-            setStep('verify');
-        }, 3000);
+                setAttendanceData(initialAttendance);
+                setStep('verify');
+            }, 3000);
+        } catch (e) {
+            toast.error("Failed to load students for this section");
+            setStep('select');
+        }
     };
 
     const toggleAttendance = (studentId: string) => {
@@ -72,19 +83,34 @@ const TakeAttendance = () => {
         ));
     };
 
-    const handleSubmit = () => {
-        // In a real app, we would save to backend here
-        // For prototype, we just show success
-        setStep('success');
-        toast.success("Attendance submitted successfully");
-    };
+    const handleSubmit = async () => {
+        const routine = routines.find(r => r.id === selectedRoutineId);
+        if (!routine) return;
 
-    const getStudentName = (id: string) => getStudents().find(s => s.id === id)?.name || id;
-    const getStudentId = (id: string) => getStudents().find(s => s.id === id)?.studentId || id;
+        setIsLoading(true);
+        try {
+            const logs = attendanceData.map(d => ({
+                student_id: d.studentId,
+                routine_id: selectedRoutineId,
+                subject_id: routine.subject_id,
+                date: new Date().toISOString().split('T')[0],
+                status: d.status,
+                confidence: d.status === 'present' ? 0.95 : 0 // Demo values
+            }));
+
+            await api.logAttendance(logs);
+            setStep('success');
+            toast.success("Attendance submitted successfully");
+        } catch (e) {
+            toast.error("Failed to save attendance");
+        } finally {
+            setIsLoading(false);
+        }
+    };
 
     const reset = () => {
         setStep('select');
-        setSelectedClassId("");
+        setSelectedRoutineId("");
         setAttendanceData([]);
     };
 
@@ -93,45 +119,46 @@ const TakeAttendance = () => {
             <div className="max-w-xl mx-auto space-y-6">
                 <div className="text-center space-y-2">
                     <h1 className="text-3xl font-bold tracking-tight">Take Attendance</h1>
-                    <p className="text-muted-foreground">Select a class to start the attendance process.</p>
+                    <p className="text-muted-foreground">Select a class from your routine today.</p>
                 </div>
 
                 <Card>
                     <CardHeader>
                         <CardTitle>Class Selection</CardTitle>
                         <CardDescription>
-                            Only classes scheduled for <strong>{today}</strong> are shown.
+                            Showing classes for <strong>{today}</strong>.
                         </CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">
-                        {availableClasses.length > 0 ? (
-                            <div className="space-y-2">
-                                <Label>Choose Class</Label>
-                                <Select value={selectedClassId} onValueChange={setSelectedClassId}>
-                                    <SelectTrigger>
-                                        <SelectValue placeholder="Select class" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        {availableClasses.map((ac) => (
-                                            <SelectItem key={ac.id} value={ac.id}>
-                                                {getSubjectName(ac.subjectId)} - {getBatchName(ac.batchId)} ({getSectionName(ac.sectionId)})
-                                            </SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
-                            </div>
+                        {!isLoading ? (
+                            routines.length > 0 ? (
+                                <div className="space-y-2">
+                                    <Label>Choose Class</Label>
+                                    <Select value={selectedRoutineId} onValueChange={setSelectedRoutineId}>
+                                        <SelectTrigger>
+                                            <SelectValue placeholder="Select class" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {routines.map((r) => (
+                                                <SelectItem key={r.id} value={r.id}>
+                                                    {r.subject?.name} ({r.subject?.section?.name}) - {r.start_time?.slice(0, 5)}
+                                                </SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                            ) : (
+                                <div className="flex flex-col items-center justify-center py-6 text-center text-muted-foreground border-2 border-dashed rounded-lg">
+                                    <AlertCircle className="w-8 h-8 mb-2 opacity-50" />
+                                    <p>No classes scheduled for you today.</p>
+                                </div>
+                            )
                         ) : (
-                            <div className="flex flex-col items-center justify-center py-6 text-center text-muted-foreground border-2 border-dashed rounded-lg">
-                                <AlertCircle className="w-8 h-8 mb-2 opacity-50" />
-                                <p>No classes scheduled for today.</p>
-                                <Button variant="link" onClick={() => navigate('/teacher/routine')}>
-                                    Check or Set Routine
-                                </Button>
-                            </div>
+                            <div className="text-center py-6">Loading routine...</div>
                         )}
                     </CardContent>
                     <CardFooter>
-                        <Button className="w-full" onClick={handleStartCamera} disabled={!selectedClassId}>
+                        <Button className="w-full" onClick={handleStartCamera} disabled={!selectedRoutineId || isLoading}>
                             <Camera className="mr-2 h-4 w-4" />
                             Start Camera
                         </Button>
@@ -196,8 +223,8 @@ const TakeAttendance = () => {
                             <div className="max-h-[60vh] overflow-y-auto divide-y">
                                 {attendanceData.map((record) => (
                                     <div key={record.studentId} className="grid grid-cols-4 p-4 items-center hover:bg-muted/50">
-                                        <div className="font-mono text-sm">{getStudentId(record.studentId)}</div>
-                                        <div className="col-span-2">{getStudentName(record.studentId)}</div>
+                                        <div className="font-mono text-sm">{record.student_id}</div>
+                                        <div className="col-span-2">{record.name}</div>
                                         <div className="flex justify-end items-center gap-2">
                                             <span className={`text-xs font-medium ${record.status === 'present' ? 'text-green-600' : 'text-destructive'}`}>
                                                 {record.status.toUpperCase()}
@@ -214,8 +241,8 @@ const TakeAttendance = () => {
                     </CardContent>
                     <CardFooter className="flex justify-between p-6">
                         <Button variant="outline" onClick={() => setStep('select')}>Cancel</Button>
-                        <Button onClick={handleSubmit} className="bg-green-600 hover:bg-green-700">
-                            Confirm & Save
+                        <Button onClick={handleSubmit} disabled={isLoading} className="bg-green-600 hover:bg-green-700">
+                            {isLoading ? "Saving..." : "Confirm & Save"}
                         </Button>
                     </CardFooter>
                 </Card>

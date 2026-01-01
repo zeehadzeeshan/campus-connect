@@ -1,5 +1,4 @@
-
-import { useState, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import {
     Building2,
     Layers,
@@ -7,7 +6,6 @@ import {
     BookOpen,
     Plus,
     Trash2,
-    Edit2
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -37,96 +35,120 @@ import {
     SelectTrigger,
     SelectValue,
 } from "@/components/ui/select";
-import { mockData, Department, Batch, Section, Subject } from '@/data/mockData';
+import { api, Faculty, Batch, Section, Subject } from '@/services/api';
 import { useToast } from '@/hooks/use-toast';
 
 const AcademicStructure = () => {
     const { toast } = useToast();
+
     // State for data
-    const [departments, setDepartments] = useState<Department[]>(mockData.getDepartments());
-    const [batches, setBatches] = useState<Batch[]>(mockData.getBatches());
-    const [sections, setSections] = useState<Section[]>(mockData.getSections());
-    const [subjects, setSubjects] = useState<Subject[]>(mockData.getSubjects());
+    const [departments, setDepartments] = useState<Faculty[]>([]); // Using Faculty interface but keeping 'departments' var name for UI consistency
+    const [batches, setBatches] = useState<Batch[]>([]);
+    const [sections, setSections] = useState<Section[]>([]);
+    const [subjects, setSubjects] = useState<Subject[]>([]);
+    const [isLoading, setIsLoading] = useState(true);
 
-    // State for modals
-    const [isDialogOpen, setIsDialogOpen] = useState(false);
-    const [activeTab, setActiveTab] = useState('departments');
-    const [newItemName, setNewItemName] = useState('');
-    const [newCode, setNewCode] = useState(''); // For subjects
-    const [selectedParentId, setSelectedParentId] = useState('');
-    const [dialogDeptId, setDialogDeptId] = useState('');
-
-    // Refresh helper
-    const refreshData = () => {
-        setDepartments(mockData.getDepartments());
-        setBatches(mockData.getBatches());
-        setSections(mockData.getSections());
-        setSubjects(mockData.getSubjects());
-    };
-
-    // State for filters
+    // Filter States
     const [filterDept, setFilterDept] = useState('all');
     const [filterBatch, setFilterBatch] = useState('all');
 
-    // Reset filters on tab change
+    // Modal States
+    const [isDialogOpen, setIsDialogOpen] = useState(false);
+    const [activeTab, setActiveTab] = useState('departments');
+    const [newItemName, setNewItemName] = useState('');
+    const [newCode, setNewCode] = useState('');
+    const [selectedParentId, setSelectedParentId] = useState('');
+    const [dialogDeptId, setDialogDeptId] = useState(''); // For hierarchical selection in modal
+
+    // Fetch Data
+    const fetchData = async () => {
+        setIsLoading(true);
+        try {
+            const [deptsData, batchesData, sectionsData, subjectsData] = await Promise.all([
+                api.getFaculties(),
+                api.getBatches(),
+                api.getSections(),
+                api.getSubjects()
+            ]);
+            setDepartments(deptsData);
+            setBatches(batchesData);
+            setSections(sectionsData);
+            setSubjects(subjectsData);
+        } catch (error) {
+            console.error("Failed to fetch data", error);
+            toast({ title: 'Error', description: 'Failed to load data', variant: 'destructive' });
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        fetchData();
+    }, []);
+
     const handleTabChange = (val: string) => {
         setActiveTab(val);
         setFilterDept('all');
         setFilterBatch('all');
         setSelectedParentId('');
+        setNewItemName('');
+        setNewCode('');
     };
 
-    // Generic Handle Search/Filter could go here, for now relying on raw lists
-
-    const handleAdd = () => {
+    const handleAdd = async () => {
         if (!newItemName) return;
 
         try {
             if (activeTab === 'departments') {
-                mockData.addDepartment({ name: newItemName });
+                await api.createFaculty(newItemName);
             } else if (activeTab === 'batches') {
                 if (!selectedParentId) throw new Error('Department is required');
-                mockData.addBatch({ name: newItemName, departmentId: selectedParentId });
+                await api.createBatch(selectedParentId, newItemName);
             } else if (activeTab === 'sections') {
                 if (!selectedParentId) throw new Error('Batch is required');
-                mockData.addSection({ name: newItemName, batchId: selectedParentId });
+                await api.createSection(selectedParentId, newItemName);
             } else if (activeTab === 'subjects') {
-                if (!selectedParentId) throw new Error('Department is required');
+                if (!selectedParentId) throw new Error('Section is required');
+                // NOTE: Using 'Section' as parent for Subject based on DB Schema, 
+                // but simpler UI might select 'Department' -> 'Batch' -> 'Section'? 
+                // For now, let's assume the UI passes Section ID.
                 if (!newCode) throw new Error('Subject code is required');
-                mockData.addSubject({ name: newItemName, code: newCode, departmentId: selectedParentId });
+                await api.createSubject(selectedParentId, newItemName, newCode);
             }
 
             toast({ title: 'Success', description: 'Item added successfully' });
-            refreshData();
+            fetchData(); // Refresh
             setIsDialogOpen(false);
             setNewItemName('');
             setNewCode('');
             setSelectedParentId('');
             setDialogDeptId('');
         } catch (error: any) {
-            toast({ title: 'Error', description: error.message, variant: 'destructive' });
+            toast({ title: 'Error', description: error.message || 'Failed to create item', variant: 'destructive' });
         }
     };
 
-    const handleDelete = (type: string, id: string) => {
+    const handleDelete = async (table: string, id: string) => {
         if (!confirm('Are you sure? This action cannot be undone.')) return;
-
-        if (type === 'dept') mockData.deleteDepartment(id);
-        if (type === 'batch') mockData.deleteBatch(id);
-        if (type === 'section') mockData.deleteSection(id);
-        if (type === 'subject') mockData.deleteSubject(id);
-
-        refreshData();
-        toast({ title: 'Deleted', description: 'Item deleted successfully' });
+        try {
+            await api.deleteResource(table, id);
+            toast({ title: 'Deleted', description: 'Item deleted successfully' });
+            fetchData();
+        } catch (error: any) {
+            toast({ title: 'Error', description: error.message || 'Failed to delete item', variant: 'destructive' });
+        }
     };
+
+    // Helper to get Department Name
+    const getDeptName = (id: string) => departments.find(d => d.id === id)?.name || 'Unknown';
+    const getBatchName = (id: string) => batches.find(b => b.id === id)?.name || 'Unknown';
+    const getSectionName = (id: string) => sections.find(s => s.id === id)?.name || 'Unknown';
 
     return (
         <div className="space-y-6">
             <div>
                 <h2 className="text-3xl font-bold tracking-tight">Academic Structure</h2>
-                <p className="text-muted-foreground">
-                    Manage departments, batches, sections, and subjects.
-                </p>
+                <p className="text-muted-foreground">Manage departments, batches, sections, and subjects.</p>
             </div>
 
             <Tabs defaultValue="departments" onValueChange={handleTabChange} className="w-full">
@@ -140,10 +162,7 @@ const AcademicStructure = () => {
                 <div className="mt-6 flex justify-end">
                     <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
                         <DialogTrigger asChild>
-                            <Button className="gap-2">
-                                <Plus className="w-4 h-4" />
-                                Add New
-                            </Button>
+                            <Button className="gap-2"><Plus className="w-4 h-4" /> Add New</Button>
                         </DialogTrigger>
                         <DialogContent>
                             <DialogHeader>
@@ -161,6 +180,7 @@ const AcademicStructure = () => {
                                     <Input value={newItemName} onChange={(e) => setNewItemName(e.target.value)} placeholder="Enter name" />
                                 </div>
 
+                                {/* Batches -> Select Dept */}
                                 {activeTab === 'batches' && (
                                     <div className="grid gap-2">
                                         <Label>Department</Label>
@@ -173,6 +193,7 @@ const AcademicStructure = () => {
                                     </div>
                                 )}
 
+                                {/* Sections -> Select Dept -> Select Batch */}
                                 {activeTab === 'sections' && (
                                     <>
                                         <div className="grid gap-2">
@@ -189,29 +210,54 @@ const AcademicStructure = () => {
                                             <Select onValueChange={setSelectedParentId} disabled={!dialogDeptId}>
                                                 <SelectTrigger><SelectValue placeholder="Select Batch" /></SelectTrigger>
                                                 <SelectContent>
-                                                    {batches
-                                                        .filter(b => b.departmentId === dialogDeptId)
-                                                        .map(b => (
-                                                            <SelectItem key={b.id} value={b.id}>
-                                                                {b.name}
-                                                            </SelectItem>
-                                                        ))}
+                                                    {batches.filter(b => b.faculty_id === dialogDeptId).map(b => (
+                                                        <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
+                                                    ))}
                                                 </SelectContent>
                                             </Select>
                                         </div>
                                     </>
                                 )}
 
+                                {/* Subjects -> Select Dept -> Select Batch -> Select Section (Since Subject is linked to Section) */}
                                 {activeTab === 'subjects' && (
-                                    <div className="grid gap-2">
-                                        <Label>Department</Label>
-                                        <Select onValueChange={setSelectedParentId}>
-                                            <SelectTrigger><SelectValue placeholder="Select Department" /></SelectTrigger>
-                                            <SelectContent>
-                                                {departments.map(d => <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>)}
-                                            </SelectContent>
-                                        </Select>
-                                    </div>
+                                    <>
+                                        {/* Simplified Drilldown for Subjects */}
+                                        <div className="grid gap-2">
+                                            <Label>Department</Label>
+                                            <Select onValueChange={(val) => setDialogDeptId(val)}>
+                                                <SelectTrigger><SelectValue placeholder="Filter Batches by Department" /></SelectTrigger>
+                                                <SelectContent>
+                                                    {departments.map(d => <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>)}
+                                                </SelectContent>
+                                            </Select>
+                                        </div>
+                                        {/* Ideally we need 3 levels here: Dept -> Batch -> Section */}
+                                        {/* For simplicity/space, let's just list all sections if no filters, or filter by logic. 
+                                            But 'selectedParentId' must be SECTION ID.
+                                         */}
+                                        <div className="grid gap-2">
+                                            <Label>Section</Label>
+                                            <Select onValueChange={setSelectedParentId}>
+                                                <SelectTrigger><SelectValue placeholder="Select Section" /></SelectTrigger>
+                                                <SelectContent>
+                                                    {sections.filter(s => {
+                                                        if (!dialogDeptId) return true;
+                                                        const batch = batches.find(b => b.id === s.batch_id);
+                                                        return batch?.faculty_id === dialogDeptId;
+                                                    }).map(s => {
+                                                        const batch = batches.find(b => b.id === s.batch_id);
+                                                        const dept = departments.find(d => d.id === batch?.faculty_id);
+                                                        return (
+                                                            <SelectItem key={s.id} value={s.id}>
+                                                                {s.name} ({dept?.name} - {batch?.name})
+                                                            </SelectItem>
+                                                        );
+                                                    })}
+                                                </SelectContent>
+                                            </Select>
+                                        </div>
+                                    </>
                                 )}
                             </div>
                             <DialogFooter>
@@ -221,7 +267,7 @@ const AcademicStructure = () => {
                     </Dialog>
                 </div>
 
-                {/* Departments Content */}
+                {/* DEPARTMENTS */}
                 <TabsContent value="departments">
                     <Card>
                         <Table>
@@ -236,7 +282,7 @@ const AcademicStructure = () => {
                                     <TableRow key={dept.id}>
                                         <TableCell className="font-medium">{dept.name}</TableCell>
                                         <TableCell className="text-right">
-                                            <Button variant="ghost" size="sm" onClick={() => handleDelete('dept', dept.id)}>
+                                            <Button variant="ghost" size="sm" onClick={() => handleDelete('faculties', dept.id)}>
                                                 <Trash2 className="w-4 h-4 text-destructive" />
                                             </Button>
                                         </TableCell>
@@ -247,20 +293,8 @@ const AcademicStructure = () => {
                     </Card>
                 </TabsContent>
 
-                {/* Batches Content */}
+                {/* BATCHES */}
                 <TabsContent value="batches" className="space-y-4">
-                    <div className="flex items-center space-x-2">
-                        <Label>Filter by Department:</Label>
-                        <Select onValueChange={setFilterDept} value={filterDept}>
-                            <SelectTrigger className="w-[280px]">
-                                <SelectValue placeholder="All Departments" />
-                            </SelectTrigger>
-                            <SelectContent>
-                                <SelectItem value="all">All Departments</SelectItem>
-                                {departments.map(d => <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>)}
-                            </SelectContent>
-                        </Select>
-                    </div>
                     <Card>
                         <Table>
                             <TableHeader>
@@ -271,58 +305,24 @@ const AcademicStructure = () => {
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
-                                {batches
-                                    .filter(b => filterDept && filterDept !== 'all' ? b.departmentId === filterDept : true)
-                                    .map((batch) => (
-                                        <TableRow key={batch.id}>
-                                            <TableCell className="font-medium">{batch.name}</TableCell>
-                                            <TableCell>{departments.find(d => d.id === batch.departmentId)?.name || 'Unknown'}</TableCell>
-                                            <TableCell className="text-right">
-                                                <Button variant="ghost" size="sm" onClick={() => handleDelete('batch', batch.id)}>
-                                                    <Trash2 className="w-4 h-4 text-destructive" />
-                                                </Button>
-                                            </TableCell>
-                                        </TableRow>
-                                    ))}
+                                {batches.map((batch) => (
+                                    <TableRow key={batch.id}>
+                                        <TableCell className="font-medium">{batch.name}</TableCell>
+                                        <TableCell>{getDeptName(batch.faculty_id)}</TableCell>
+                                        <TableCell className="text-right">
+                                            <Button variant="ghost" size="sm" onClick={() => handleDelete('batches', batch.id)}>
+                                                <Trash2 className="w-4 h-4 text-destructive" />
+                                            </Button>
+                                        </TableCell>
+                                    </TableRow>
+                                ))}
                             </TableBody>
                         </Table>
                     </Card>
                 </TabsContent>
 
-                {/* Sections Content */}
+                {/* SECTIONS */}
                 <TabsContent value="sections" className="space-y-4">
-                    <div className="flex flex-col sm:flex-row gap-4">
-                        <div className="flex items-center space-x-2">
-                            <Label>Department:</Label>
-                            <Select onValueChange={(val) => { setFilterDept(val); setFilterBatch('all'); }} value={filterDept}>
-                                <SelectTrigger className="w-[240px]">
-                                    <SelectValue placeholder="All Departments" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="all">All Departments</SelectItem>
-                                    {departments.map(d => <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>)}
-                                </SelectContent>
-                            </Select>
-                        </div>
-                        <div className="flex items-center space-x-2">
-                            <Label>Batch:</Label>
-                            <Select onValueChange={setFilterBatch} value={filterBatch}>
-                                <SelectTrigger className="w-[240px]">
-                                    <SelectValue placeholder="All Batches" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="all">All Batches</SelectItem>
-                                    {batches
-                                        .filter(b => filterDept && filterDept !== 'all' ? b.departmentId === filterDept : true)
-                                        .map(b => (
-                                            <SelectItem key={b.id} value={b.id}>
-                                                {b.name} ({departments.find(d => d.id === b.departmentId)?.name})
-                                            </SelectItem>
-                                        ))}
-                                </SelectContent>
-                            </Select>
-                        </div>
-                    </div>
                     <Card>
                         <Table>
                             <TableHeader>
@@ -333,37 +333,26 @@ const AcademicStructure = () => {
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
-                                {sections
-                                    .filter(s => {
-                                        // First strict filter by batch if selected
-                                        if (filterBatch && filterBatch !== 'all') return s.batchId === filterBatch;
-                                        // If no batch selected but dept is, filter by all batches in that dept
-                                        if (filterDept && filterDept !== 'all') {
-                                            const batch = batches.find(b => b.id === s.batchId);
-                                            return batch?.departmentId === filterDept;
-                                        }
-                                        return true;
-                                    })
-                                    .map((section) => {
-                                        const batch = batches.find(b => b.id === section.batchId);
-                                        return (
-                                            <TableRow key={section.id}>
-                                                <TableCell className="font-medium">{section.name}</TableCell>
-                                                <TableCell>{batch ? `${batch.name} (${departments.find(d => d.id === batch.departmentId)?.name || 'Unknown'})` : 'Unknown'}</TableCell>
-                                                <TableCell className="text-right">
-                                                    <Button variant="ghost" size="sm" onClick={() => handleDelete('section', section.id)}>
-                                                        <Trash2 className="w-4 h-4 text-destructive" />
-                                                    </Button>
-                                                </TableCell>
-                                            </TableRow>
-                                        );
-                                    })}
+                                {sections.map((section) => {
+                                    const batch = batches.find(b => b.id === section.batch_id);
+                                    return (
+                                        <TableRow key={section.id}>
+                                            <TableCell className="font-medium">{section.name}</TableCell>
+                                            <TableCell>{batch ? `${batch.name} (${getDeptName(batch.faculty_id)})` : 'Unknown'}</TableCell>
+                                            <TableCell className="text-right">
+                                                <Button variant="ghost" size="sm" onClick={() => handleDelete('sections', section.id)}>
+                                                    <Trash2 className="w-4 h-4 text-destructive" />
+                                                </Button>
+                                            </TableCell>
+                                        </TableRow>
+                                    );
+                                })}
                             </TableBody>
                         </Table>
                     </Card>
                 </TabsContent>
 
-                {/* Subjects Content */}
+                {/* SUBJECTS */}
                 <TabsContent value="subjects">
                     <Card>
                         <Table>
@@ -371,34 +360,36 @@ const AcademicStructure = () => {
                                 <TableRow>
                                     <TableHead>Code</TableHead>
                                     <TableHead>Name</TableHead>
-                                    <TableHead>Department</TableHead>
+                                    <TableHead>Section (Batch/Dept)</TableHead>
                                     <TableHead className="text-right">Actions</TableHead>
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
-                                {subjects.map((subject) => (
-                                    <TableRow key={subject.id}>
-                                        <TableCell className="font-mono">{subject.code}</TableCell>
-                                        <TableCell className="font-medium">{subject.name}</TableCell>
-                                        <TableCell>{departments.find(d => d.id === subject.departmentId)?.name || 'Unknown'}</TableCell>
-                                        <TableCell className="text-right">
-                                            <Button variant="ghost" size="sm" onClick={() => handleDelete('subject', subject.id)}>
-                                                <Trash2 className="w-4 h-4 text-destructive" />
-                                            </Button>
-                                        </TableCell>
-                                    </TableRow>
-                                ))}
+                                {subjects.map((subject) => {
+                                    const section = sections.find(s => s.id === subject.section_id);
+                                    const batch = section ? batches.find(b => b.id === section.batch_id) : null;
+                                    const dept = batch ? departments.find(d => d.id === batch.faculty_id) : null;
+
+                                    return (
+                                        <TableRow key={subject.id}>
+                                            <TableCell className="font-mono">{subject.code}</TableCell>
+                                            <TableCell className="font-medium">{subject.name}</TableCell>
+                                            <TableCell>
+                                                {section ? `${section.name} - ${batch?.name} (${dept?.name})` : 'Unknown'}
+                                            </TableCell>
+                                            <TableCell className="text-right">
+                                                <Button variant="ghost" size="sm" onClick={() => handleDelete('subjects', subject.id)}>
+                                                    <Trash2 className="w-4 h-4 text-destructive" />
+                                                </Button>
+                                            </TableCell>
+                                        </TableRow>
+                                    );
+                                })}
                             </TableBody>
                         </Table>
                     </Card>
                 </TabsContent>
-
             </Tabs>
-
-            {/* Import Card just in case we used it, though TabsContent wraps it */}
-            <div className="hidden">
-                {/* Helper to ensure imports are used if I missed one */}
-            </div>
         </div>
     );
 };

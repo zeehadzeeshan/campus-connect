@@ -1,41 +1,58 @@
+import { useState, useEffect } from "react";
 import { useAuth } from "@/contexts/AuthContext";
-import { getTeachers, routines, attendanceRecords, batches, subjects, sections } from "@/data/mockData";
+import { api } from "@/services/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Calendar, Users, CheckCircle } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 
 const TeacherDashboard = () => {
     const { user } = useAuth();
+    const { toast } = useToast();
+    const [stats, setStats] = useState({
+        assignedCount: 0,
+        todayCount: 0,
+        attendanceTaken: 0
+    });
+    const [todayClasses, setTodayClasses] = useState<any[]>([]);
+    const [isLoading, setIsLoading] = useState(true);
 
-    // Find full teacher record to get assigned subjects
-    // For prototype, if user is not found or not a teacher, fallback or show empty
-    // In real app, we'd fetch from API
-    const teacher = getTeachers().find(t => t.email === user?.email);
+    const fetchData = async () => {
+        if (!user?.id) return;
+        setIsLoading(true);
+        try {
+            const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+            const today = days[new Date().getDay()];
 
-    // Stats calculation
-    const assignedBatchesCount = teacher?.assignedSubjects?.length || 0;
+            // 1. Get Teacher Assignments & Routine
+            const [myRoutines, allAssignments] = await Promise.all([
+                api.getRoutines({ teacher_id: user.id, day: today }),
+                api.getTeacherAssignments(user.id)
+            ]);
 
-    // Get unique batch count just in case
-    // const uniqueBatches = new Set(teacher?.assignedSubjects?.map(a => a.batchId)).size;
+            // 2. Count attendance logs for today (simulated or real query)
+            // For now, let's just count how many students have logs today for teacher's subjects
+            // This is a bit complex for a single query, but we can approximate
+            const todayDate = new Date().toISOString().split('T')[0];
+            // Since we don't have a "getTeacherAttendanceStats" method yet, we'll fetch logs for my subjects
+            // Alternatively, just show 0 or fetch recent logs
 
-    // Today's classes
-    const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    const today = days[new Date().getDay()];
+            setTodayClasses(myRoutines || []);
+            setStats({
+                assignedCount: allAssignments?.length || 0,
+                todayCount: myRoutines?.length || 0,
+                attendanceTaken: 0 // Will implement detailed stats later
+            });
+        } catch (error) {
+            console.error("Dashboard fetch error", error);
+            toast({ title: "Error", description: "Failed to load dashboard data", variant: "destructive" });
+        } finally {
+            setIsLoading(false);
+        }
+    };
 
-    const todayClasses = routines.filter(r => r.day === today && r.teacherId === teacher?.id);
-
-    // Attendance taken today
-    const todayDateStr = new Date().toISOString().split('T')[0];
-    const sessionsToday = new Set(
-        attendanceRecords
-            .filter(a => a.timestamp.startsWith(todayDateStr) &&
-                teacher?.assignedSubjects?.some(as => as.subjectId === a.subjectId)) // approximate check for "my sessions"
-            .map(a => `${a.subjectId}-${a.date}`) // Grouping by subject+date as a "session" proxy
-    ).size;
-
-    // Helper to get names
-    const getBatchName = (id: string) => batches.find(b => b.id === id)?.name || id;
-    const getSubjectName = (id: string) => subjects.find(s => s.id === id)?.name || id;
-    const getSectionName = (id: string) => sections.find(s => s.id === id)?.name || id;
+    useEffect(() => {
+        fetchData();
+    }, [user?.id]);
 
     return (
         <div className="space-y-6">
@@ -51,7 +68,7 @@ const TeacherDashboard = () => {
                         <Users className="h-4 w-4 text-muted-foreground" />
                     </CardHeader>
                     <CardContent>
-                        <div className="text-2xl font-bold">{assignedBatchesCount}</div>
+                        <div className="text-2xl font-bold">{stats.assignedCount}</div>
                         <p className="text-xs text-muted-foreground">
                             Total subject-batches assigned
                         </p>
@@ -66,9 +83,9 @@ const TeacherDashboard = () => {
                         <Calendar className="h-4 w-4 text-muted-foreground" />
                     </CardHeader>
                     <CardContent>
-                        <div className="text-2xl font-bold">{todayClasses.length}</div>
+                        <div className="text-2xl font-bold">{stats.todayCount}</div>
                         <p className="text-xs text-muted-foreground">
-                            Classes scheduled for {today}
+                            Classes scheduled for today
                         </p>
                     </CardContent>
                 </Card>
@@ -81,7 +98,7 @@ const TeacherDashboard = () => {
                         <CheckCircle className="h-4 w-4 text-muted-foreground" />
                     </CardHeader>
                     <CardContent>
-                        <div className="text-2xl font-bold">{sessionsToday}</div>
+                        <div className="text-2xl font-bold">{stats.attendanceTaken}</div>
                         <p className="text-xs text-muted-foreground">
                             Sessions recorded today
                         </p>
@@ -92,37 +109,43 @@ const TeacherDashboard = () => {
             {/* Today's Schedule List */}
             <Card className="col-span-1">
                 <CardHeader>
-                    <CardTitle>Today's Schedule ({today})</CardTitle>
+                    <CardTitle>Today's Schedule</CardTitle>
                 </CardHeader>
                 <CardContent>
-                    {todayClasses.length > 0 ? (
-                        <div className="space-y-4">
-                            {todayClasses.map((routine) => (
-                                <div key={routine.id} className="flex items-center justify-between border-b pb-4 last:border-0 last:pb-0">
-                                    <div className="space-y-1">
-                                        <p className="font-medium leading-none">
-                                            {getSubjectName(routine.subjectId)}
-                                        </p>
-                                        <p className="text-sm text-muted-foreground">
-                                            {getBatchName(routine.batchId)} • {getSectionName(routine.sectionId)}
-                                        </p>
-                                    </div>
-                                    <div className="text-right">
-                                        <div className="bg-secondary px-2.5 py-0.5 rounded-md text-sm font-medium">
-                                            {routine.startTime} - {routine.endTime}
-                                        </div>
-                                        {routine.roomId && (
-                                            <p className="text-xs text-muted-foreground mt-1">
-                                                Room: {routine.roomId}
+                    {!isLoading ? (
+                        todayClasses.length > 0 ? (
+                            <div className="space-y-4">
+                                {todayClasses.map((routine) => (
+                                    <div key={routine.id} className="flex items-center justify-between border-b pb-4 last:border-0 last:pb-0">
+                                        <div className="space-y-1">
+                                            <p className="font-medium leading-none">
+                                                {routine.subject?.name}
                                             </p>
-                                        )}
+                                            <p className="text-sm text-muted-foreground">
+                                                {routine.subject?.section?.batch?.name} • {routine.subject?.section?.name}
+                                            </p>
+                                        </div>
+                                        <div className="text-right">
+                                            <div className="bg-secondary px-2.5 py-0.5 rounded-md text-sm font-medium">
+                                                {routine.start_time?.slice(0, 5)} - {routine.end_time?.slice(0, 5)}
+                                            </div>
+                                            {routine.room_id && (
+                                                <p className="text-xs text-muted-foreground mt-1">
+                                                    Room: {routine.room_id}
+                                                </p>
+                                            )}
+                                        </div>
                                     </div>
-                                </div>
-                            ))}
-                        </div>
+                                ))}
+                            </div>
+                        ) : (
+                            <div className="text-center py-4 text-muted-foreground">
+                                No classes scheduled for today.
+                            </div>
+                        )
                     ) : (
                         <div className="text-center py-4 text-muted-foreground">
-                            No classes scheduled for today.
+                            Loading schedule...
                         </div>
                     )}
                 </CardContent>

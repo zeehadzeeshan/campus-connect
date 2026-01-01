@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useAuth } from "@/contexts/AuthContext";
-import { getTeachers, attendanceRecords as mockRecords, batches, subjects, sections, getStudents, AttendanceRecord } from "@/data/mockData";
+import { api } from "@/services/api";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
@@ -16,75 +16,104 @@ interface SessionGroup {
     id: string;
     date: string;
     subjectId: string;
+    subjectName: string;
     totalPresent: number;
     totalAbsent: number;
-    records: AttendanceRecord[];
+    records: any[];
 }
 
 const PastAttendance = () => {
     const { user } = useAuth();
-    const teacher = getTeachers().find(t => t.email === user?.email);
-    const assignedClasses = teacher?.assignedSubjects || [];
-
     const [searchTerm, setSearchTerm] = useState("");
     const [selectedSubject, setSelectedSubject] = useState("all");
     const [selectedSession, setSelectedSession] = useState<SessionGroup | null>(null);
-    const [records, setRecords] = useState<AttendanceRecord[]>(mockRecords); // Local state for edits
+    const [allRecords, setAllRecords] = useState<any[]>([]);
+    const [assignedClasses, setAssignedClasses] = useState<any[]>([]);
+    const [isLoading, setIsLoading] = useState(true);
 
-    const getSubjectName = (id: string) => subjects.find(s => s.id === id)?.name || id;
-    const getBatchName = (id: string) => batches.find(b => b.id === id)?.name || id;
-    const getSectionName = (id: string) => sections.find(s => s.id === id)?.name || id;
-    const getStudentName = (id: string) => getStudents().find(s => s.id === id)?.name || id;
-    const getStudentId = (id: string) => getStudents().find(s => s.id === id)?.studentId || id;
+    const fetchData = async () => {
+        if (!user?.id) return;
+        setIsLoading(true);
+        try {
+            const [history, assignments] = await Promise.all([
+                api.getAttendanceHistory({ teacher_id: user.id }),
+                api.getTeacherAssignments(user.id)
+            ]);
+            setAllRecords(history || []);
+            setAssignedClasses(assignments || []);
+        } catch (e) {
+            toast.error("Failed to load attendance history");
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        fetchData();
+    }, [user?.id]);
 
     // Group records into sessions by (Subject + Date)
-    // In a real DB we'd have a separate 'sessions' table, here we infer it
-    const sessions = [];
-    const grouped = new Map();
+    const sessions = useMemo(() => {
+        const grouped = new Map<string, SessionGroup>();
 
-    records.forEach(record => {
-        // Filter by teacher's subjects
-        if (teacher?.assignedSubjects?.some(as => as.subjectId === record.subjectId)) {
-            const key = `${record.subjectId}-${record.date.split('T')[0]}`;
+        allRecords.forEach(record => {
+            const key = `${record.subject_id}-${record.date}`;
             if (!grouped.has(key)) {
                 grouped.set(key, {
                     id: key,
                     date: record.date,
-                    subjectId: record.subjectId,
+                    subjectId: record.subject_id,
+                    subjectName: record.subject?.name || "Unknown",
                     totalPresent: 0,
                     totalAbsent: 0,
                     records: []
                 });
             }
-            const group = grouped.get(key);
+            const group = grouped.get(key)!;
             group.records.push(record);
             if (record.status === 'present') group.totalPresent++;
             else group.totalAbsent++;
-        }
-    });
+        });
 
-    const sessionList = Array.from(grouped.values()).sort((a, b) =>
-        new Date(b.date).getTime() - new Date(a.date).getTime()
-    );
+        return Array.from(grouped.values()).sort((a, b) =>
+            new Date(b.date).getTime() - new Date(a.date).getTime()
+        );
+    }, [allRecords]);
 
-    const filteredSessions = sessionList.filter(session => {
+    const filteredSessions = sessions.filter(session => {
         const matchesSubject = selectedSubject === 'all' || session.subjectId === selectedSubject;
-        const matchesSearch = getSubjectName(session.subjectId).toLowerCase().includes(searchTerm.toLowerCase());
+        const matchesSearch = session.subjectName.toLowerCase().includes(searchTerm.toLowerCase());
         return matchesSubject && matchesSearch;
     });
 
-    const toggleStatus = (recordId: string) => {
-        setRecords(prev => prev.map(r =>
-            r.id === recordId
-                ? { ...r, status: r.status === 'present' ? 'absent' : 'present' }
-                : r
-        ));
+    const toggleStatus = async (recordId: string, currentStatus: string) => {
+        const newStatus = currentStatus === 'present' ? 'absent' : 'present';
+        try {
+            await api.updateResource('attendance_logs', recordId, { status: newStatus });
 
-        // Update the selected session view to reflect changes immediately
-        if (selectedSession) {
-            const updatedRecord = records.find(r => r.id === recordId);
-            // This is a bit complex due to derived state, but sufficient for prototype
+            // Optimistic update
+            setAllRecords(prev => prev.map(r => r.id === recordId ? { ...r, status: newStatus } : r));
+
+            // Re-sync the selected session view
+            if (selectedSession) {
+                const refreshedRecords = allRecords.map(r => r.id === recordId ? { ...r, status: newStatus } : r);
+                const updatedSessionRecords = refreshedRecords.filter(r =>
+                    r.subject_id === selectedSession.subjectId && r.date === selectedSession.date
+                );
+
+                let p = 0, a = 0;
+                updatedSessionRecords.forEach(r => r.status === 'present' ? p++ : a++);
+
+                setSelectedSession({
+                    ...selectedSession,
+                    records: updatedSessionRecords,
+                    totalPresent: p,
+                    totalAbsent: a
+                });
+            }
             toast.success("Attendance updated");
+        } catch (e) {
+            toast.error("Failed to update status");
         }
     };
 
@@ -122,8 +151,8 @@ const PastAttendance = () => {
                                 <SelectContent>
                                     <SelectItem value="all">All Subjects</SelectItem>
                                     {assignedClasses.map(ac => (
-                                        <SelectItem key={ac.subjectId} value={ac.subjectId}>
-                                            {getSubjectName(ac.subjectId)}
+                                        <SelectItem key={ac.subject_id} value={ac.subject_id}>
+                                            {ac.subject?.name}
                                         </SelectItem>
                                     ))}
                                 </SelectContent>
@@ -132,49 +161,53 @@ const PastAttendance = () => {
                     </div>
                 </CardHeader>
                 <CardContent>
-                    <Table>
-                        <TableHeader>
-                            <TableRow>
-                                <TableHead>Date</TableHead>
-                                <TableHead>Subject</TableHead>
-                                <TableHead>Attendance</TableHead>
-                                <TableHead className="text-right">Action</TableHead>
-                            </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                            {filteredSessions.length > 0 ? (
-                                filteredSessions.map((session) => (
-                                    <TableRow key={session.id}>
-                                        <TableCell className="font-medium">
-                                            {new Date(session.date).toLocaleDateString()}
-                                        </TableCell>
-                                        <TableCell>{getSubjectName(session.subjectId)}</TableCell>
-                                        <TableCell>
-                                            <div className="flex gap-2 text-xs">
-                                                <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
-                                                    P: {session.totalPresent}
-                                                </Badge>
-                                                <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200">
-                                                    A: {session.totalAbsent}
-                                                </Badge>
-                                            </div>
-                                        </TableCell>
-                                        <TableCell className="text-right">
-                                            <Button variant="ghost" size="sm" onClick={() => setSelectedSession(session)}>
-                                                View Details
-                                            </Button>
+                    {!isLoading ? (
+                        <Table>
+                            <TableHeader>
+                                <TableRow>
+                                    <TableHead>Date</TableHead>
+                                    <TableHead>Subject</TableHead>
+                                    <TableHead>Attendance</TableHead>
+                                    <TableHead className="text-right">Action</TableHead>
+                                </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                                {filteredSessions.length > 0 ? (
+                                    filteredSessions.map((session) => (
+                                        <TableRow key={session.id}>
+                                            <TableCell className="font-medium">
+                                                {new Date(session.date).toLocaleDateString()}
+                                            </TableCell>
+                                            <TableCell>{session.subjectName}</TableCell>
+                                            <TableCell>
+                                                <div className="flex gap-2 text-xs">
+                                                    <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
+                                                        P: {session.totalPresent}
+                                                    </Badge>
+                                                    <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200">
+                                                        A: {session.totalAbsent}
+                                                    </Badge>
+                                                </div>
+                                            </TableCell>
+                                            <TableCell className="text-right">
+                                                <Button variant="ghost" size="sm" onClick={() => setSelectedSession(session)}>
+                                                    View Details
+                                                </Button>
+                                            </TableCell>
+                                        </TableRow>
+                                    ))
+                                ) : (
+                                    <TableRow>
+                                        <TableCell colSpan={4} className="text-center py-8 text-muted-foreground">
+                                            No sessions found.
                                         </TableCell>
                                     </TableRow>
-                                ))
-                            ) : (
-                                <TableRow>
-                                    <TableCell colSpan={4} className="text-center py-8 text-muted-foreground">
-                                        No filtered records found.
-                                    </TableCell>
-                                </TableRow>
-                            )}
-                        </TableBody>
-                    </Table>
+                                )}
+                            </TableBody>
+                        </Table>
+                    ) : (
+                        <div className="text-center py-8 text-muted-foreground">Loading history...</div>
+                    )}
                 </CardContent>
             </Card>
 
@@ -185,7 +218,7 @@ const PastAttendance = () => {
                         <DialogDescription>
                             {selectedSession && (
                                 <>
-                                    {getSubjectName(selectedSession.subjectId)} - {new Date(selectedSession.date).toDateString()}
+                                    {selectedSession.subjectName} - {new Date(selectedSession.date).toDateString()}
                                 </>
                             )}
                         </DialogDescription>
@@ -201,23 +234,21 @@ const PastAttendance = () => {
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
-                                {selectedSession && records
-                                    .filter(r => r.subjectId === selectedSession.subjectId && r.date === selectedSession.date)
-                                    .map((record) => (
-                                        <TableRow key={record.id}>
-                                            <TableCell className="font-mono text-sm">{getStudentId(record.studentId)}</TableCell>
-                                            <TableCell>{getStudentName(record.studentId)}</TableCell>
-                                            <TableCell className="flex justify-end items-center gap-2">
-                                                <span className={`text-xs font-medium w-12 text-right ${record.status === 'present' ? 'text-green-600' : 'text-destructive'}`}>
-                                                    {record.status.toUpperCase()}
-                                                </span>
-                                                <Switch
-                                                    checked={record.status === 'present'}
-                                                    onCheckedChange={() => toggleStatus(record.id)}
-                                                />
-                                            </TableCell>
-                                        </TableRow>
-                                    ))}
+                                {selectedSession && selectedSession.records.map((record) => (
+                                    <TableRow key={record.id}>
+                                        <TableCell className="font-mono text-sm">{record.student?.student_id}</TableCell>
+                                        <TableCell>{record.student?.profile?.name}</TableCell>
+                                        <TableCell className="flex justify-end items-center gap-2">
+                                            <span className={`text-xs font-medium w-12 text-right ${record.status === 'present' ? 'text-green-600' : 'text-destructive'}`}>
+                                                {record.status.toUpperCase()}
+                                            </span>
+                                            <Switch
+                                                checked={record.status === 'present'}
+                                                onCheckedChange={() => toggleStatus(record.id, record.status)}
+                                            />
+                                        </TableCell>
+                                    </TableRow>
+                                ))}
                             </TableBody>
                         </Table>
                     </div>

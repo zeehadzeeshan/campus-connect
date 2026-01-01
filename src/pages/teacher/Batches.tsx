@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useAuth } from "@/contexts/AuthContext";
-import { getTeachers, batches, sections, subjects, getStudents } from "@/data/mockData";
+import { api } from "@/services/api";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Users, BookOpen } from "lucide-react";
@@ -13,30 +13,45 @@ import {
     TableRow,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
+import { useToast } from "@/hooks/use-toast";
 
 const Batches = () => {
     const { user } = useAuth();
+    const { toast } = useToast();
+    const [assignedClasses, setAssignedClasses] = useState<any[]>([]);
+    const [selectedClass, setSelectedClass] = useState<any | null>(null);
+    const [classStudents, setClassStudents] = useState<any[]>([]);
+    const [isLoading, setIsLoading] = useState(true);
+    const [isFetchingStudents, setIsFetchingStudents] = useState(false);
 
-    interface AssignedSubject {
-        id: string;
-        batchId: string;
-        sectionId: string;
-        subjectId: string;
-    }
+    useEffect(() => {
+        const fetchData = async () => {
+            if (!user?.id) return;
+            setIsLoading(true);
+            try {
+                const data = await api.getTeacherAssignments(user.id);
+                setAssignedClasses(data || []);
+            } catch (e) {
+                toast({ title: "Error", description: "Failed to load assigned classes", variant: "destructive" });
+            } finally {
+                setIsLoading(false);
+            }
+        };
+        fetchData();
+    }, [user?.id]);
 
-    const [selectedClass, setSelectedClass] = useState<AssignedSubject | null>(null);
-
-    const teacher = getTeachers().find(t => t.email === user?.email);
-    const assignedClasses = teacher?.assignedSubjects || [];
-
-    const getBatchName = (id: string) => batches.find(b => b.id === id)?.name || id;
-    const getSubjectName = (id: string) => subjects.find(s => s.id === id)?.name || id;
-    const getSectionName = (id: string) => sections.find(s => s.id === id)?.name || id;
-
-    // Get students for the selected class
-    const classStudents = selectedClass
-        ? getStudents().filter(s => s.batchId === selectedClass.batchId && s.sectionId === selectedClass.sectionId)
-        : [];
+    const handleClassClick = async (assignment: any) => {
+        setSelectedClass(assignment);
+        setIsFetchingStudents(true);
+        try {
+            const students = await api.getStudentsBySection(assignment.subject?.section_id);
+            setClassStudents(students || []);
+        } catch (e) {
+            toast({ title: "Error", description: "Failed to load students", variant: "destructive" });
+        } finally {
+            setIsFetchingStudents(false);
+        }
+    };
 
     return (
         <div className="space-y-6">
@@ -48,35 +63,39 @@ const Batches = () => {
             </div>
 
             <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-                {assignedClasses.map((assignment) => (
-                    <Card
-                        key={assignment.id}
-                        className="cursor-pointer hover:border-primary/50 transition-colors"
-                        onClick={() => setSelectedClass(assignment)}
-                    >
-                        <CardHeader className="space-y-1">
-                            <CardTitle className="flex items-center gap-2">
-                                <BookOpen className="w-5 h-5 text-primary" />
-                                {getSubjectName(assignment.subjectId)}
-                            </CardTitle>
-                            <CardDescription>
-                                {batches.find(b => b.id === assignment.batchId)?.departmentId === '1' ? 'CSE' : 'EEE'} Dept
-                            </CardDescription>
-                        </CardHeader>
-                        <CardContent>
-                            <div className="flex items-center justify-between text-sm">
-                                <div className="flex items-center gap-2 text-muted-foreground">
-                                    <Users className="w-4 h-4" />
-                                    <span>
-                                        {getBatchName(assignment.batchId)} • {getSectionName(assignment.sectionId)}
-                                    </span>
+                {!isLoading ? (
+                    assignedClasses.map((assignment) => (
+                        <Card
+                            key={assignment.id}
+                            className="cursor-pointer hover:border-primary/50 transition-colors"
+                            onClick={() => handleClassClick(assignment)}
+                        >
+                            <CardHeader className="space-y-1">
+                                <CardTitle className="flex items-center gap-2">
+                                    <BookOpen className="w-5 h-5 text-primary" />
+                                    {assignment.subject?.name}
+                                </CardTitle>
+                                <CardDescription>
+                                    {assignment.subject?.code}
+                                </CardDescription>
+                            </CardHeader>
+                            <CardContent>
+                                <div className="flex items-center justify-between text-sm">
+                                    <div className="flex items-center gap-2 text-muted-foreground">
+                                        <Users className="w-4 h-4" />
+                                        <span>
+                                            {assignment.subject?.section?.batch?.name} • {assignment.subject?.section?.name}
+                                        </span>
+                                    </div>
                                 </div>
-                            </div>
-                        </CardContent>
-                    </Card>
-                ))}
+                            </CardContent>
+                        </Card>
+                    ))
+                ) : (
+                    <div className="col-span-full py-12 text-center">Loading assigned classes...</div>
+                )}
 
-                {assignedClasses.length === 0 && (
+                {!isLoading && assignedClasses.length === 0 && (
                     <div className="col-span-full py-12 text-center text-muted-foreground border-2 border-dashed rounded-lg">
                         No classes assigned yet. Contact administrator.
                     </div>
@@ -90,7 +109,7 @@ const Batches = () => {
                         <DialogDescription>
                             {selectedClass && (
                                 <>
-                                    {getSubjectName(selectedClass.subjectId)} - {getBatchName(selectedClass.batchId)} ({getSectionName(selectedClass.sectionId)})
+                                    {selectedClass.subject?.name} - {selectedClass.subject?.section?.batch?.name} ({selectedClass.subject?.section?.name})
                                 </>
                             )}
                         </DialogDescription>
@@ -107,23 +126,31 @@ const Batches = () => {
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
-                                {classStudents.length > 0 ? (
-                                    classStudents.map((student) => (
-                                        <TableRow key={student.id}>
-                                            <TableCell className="font-medium">{student.studentId}</TableCell>
-                                            <TableCell>{student.name}</TableCell>
-                                            <TableCell>{student.email}</TableCell>
-                                            <TableCell>
-                                                <Badge variant={student.status === 'active' ? 'default' : 'secondary'}>
-                                                    {student.status}
-                                                </Badge>
+                                {!isFetchingStudents ? (
+                                    classStudents.length > 0 ? (
+                                        classStudents.map((student) => (
+                                            <TableRow key={student.id}>
+                                                <TableCell className="font-medium">{student.student_id}</TableCell>
+                                                <TableCell>{student.profile?.name}</TableCell>
+                                                <TableCell>{student.profile?.email}</TableCell>
+                                                <TableCell>
+                                                    <Badge variant={student.is_active ? 'default' : 'secondary'}>
+                                                        {student.is_active ? 'Active' : 'Inactive'}
+                                                    </Badge>
+                                                </TableCell>
+                                            </TableRow>
+                                        ))
+                                    ) : (
+                                        <TableRow>
+                                            <TableCell colSpan={4} className="text-center py-8 text-muted-foreground">
+                                                No students found in this section.
                                             </TableCell>
                                         </TableRow>
-                                    ))
+                                    )
                                 ) : (
                                     <TableRow>
                                         <TableCell colSpan={4} className="text-center py-8 text-muted-foreground">
-                                            No students found in this section.
+                                            Loading student list...
                                         </TableCell>
                                     </TableRow>
                                 )}

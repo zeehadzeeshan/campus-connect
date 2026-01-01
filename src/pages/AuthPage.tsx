@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Eye, EyeOff, Plus, X } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
-import { batches, sections, subjects, departments } from '@/data/mockData';
+import { api } from '@/services/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -20,6 +20,12 @@ const AuthPage = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
 
+  // Registration Data
+  const [faculties, setFaculties] = useState<any[]>([]);
+  const [batches, setBatches] = useState<any[]>([]);
+  const [sections, setSections] = useState<any[]>([]);
+  const [subjects, setSubjects] = useState<any[]>([]);
+
   // Login form state
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
@@ -28,18 +34,39 @@ const AuthPage = () => {
   const [studentName, setStudentName] = useState('');
   const [studentId, setStudentId] = useState('');
   const [studentEmail, setStudentEmail] = useState('');
+  const [studentFaculty, setStudentFaculty] = useState('');
   const [studentBatch, setStudentBatch] = useState('');
   const [studentSection, setStudentSection] = useState('');
   const [studentPassword, setStudentPassword] = useState('');
 
   // Teacher signup form state
   const [teacherName, setTeacherName] = useState('');
-  const [teacherId, setTeacherId] = useState('');
   const [teacherEmail, setTeacherEmail] = useState('');
-  const [teacherDepartment, setTeacherDepartment] = useState('');
+  const [teacherFaculty, setTeacherFaculty] = useState('');
   const [teacherPassword, setTeacherPassword] = useState('');
   const [teacherAssignments, setTeacherAssignments] = useState<{ batchId: string; sectionId: string; subjectId: string }[]>([]);
   const [currentAssignment, setCurrentAssignment] = useState({ batchId: '', sectionId: '', subjectId: '' });
+
+  // Load registration data
+  useEffect(() => {
+    const loadData = async () => {
+      try {
+        const [f, b, s, sub] = await Promise.all([
+          api.getFaculties(),
+          api.getBatches(),
+          api.getSections(),
+          api.getSubjects()
+        ]);
+        setFaculties(f);
+        setBatches(b);
+        setSections(s);
+        setSubjects(sub);
+      } catch (e) {
+        toast({ title: 'Error', description: 'Failed to load registration data', variant: 'destructive' });
+      }
+    };
+    loadData();
+  }, []);
 
   // Redirect if no role selected
   useEffect(() => {
@@ -51,7 +78,7 @@ const AuthPage = () => {
   // Redirect if already authenticated
   useEffect(() => {
     if (isAuthenticated) {
-      if (role === 'student') navigate('/student');
+      if (role === 'student') navigate('/student/attendance');
       else if (role === 'teacher') navigate('/teacher');
       else if (role === 'admin') navigate('/admin/dashboard');
     }
@@ -65,9 +92,9 @@ const AuthPage = () => {
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
-    
+
     const result = await login(loginEmail, loginPassword);
-    
+
     if (result.success) {
       toast({
         title: 'Login successful',
@@ -80,7 +107,7 @@ const AuthPage = () => {
         variant: 'destructive',
       });
     }
-    
+
     setIsLoading(false);
   };
 
@@ -117,7 +144,7 @@ const AuthPage = () => {
 
   const handleTeacherSignup = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (teacherAssignments.length === 0) {
       toast({
         title: 'No assignments',
@@ -132,11 +159,10 @@ const AuthPage = () => {
     const result = await signup({
       role: 'teacher',
       name: teacherName,
-      teacherId: teacherId,
       email: teacherEmail,
-      departmentId: teacherDepartment,
+      facultyId: teacherFaculty,
       password: teacherPassword,
-      assignments: teacherAssignments,
+      assignments: teacherAssignments.map(a => ({ subjectId: a.subjectId })),
     });
 
     if (result.success) {
@@ -144,6 +170,7 @@ const AuthPage = () => {
         title: 'Account created',
         description: 'Welcome to the system!',
       });
+      navigate('/teacher');
     } else {
       toast({
         title: 'Signup failed',
@@ -159,11 +186,11 @@ const AuthPage = () => {
     if (currentAssignment.batchId && currentAssignment.sectionId && currentAssignment.subjectId) {
       // Check for duplicates
       const exists = teacherAssignments.some(
-        a => a.batchId === currentAssignment.batchId && 
-             a.sectionId === currentAssignment.sectionId && 
-             a.subjectId === currentAssignment.subjectId
+        a => a.batchId === currentAssignment.batchId &&
+          a.sectionId === currentAssignment.sectionId &&
+          a.subjectId === currentAssignment.subjectId
       );
-      
+
       if (exists) {
         toast({
           title: 'Duplicate assignment',
@@ -188,8 +215,9 @@ const AuthPage = () => {
     setTeacherAssignments(teacherAssignments.filter((_, i) => i !== index));
   };
 
-  const filteredSections = sections.filter(s => s.batchId === (selectedRole === 'student' ? studentBatch : currentAssignment.batchId));
-  const assignmentSections = sections.filter(s => s.batchId === currentAssignment.batchId);
+  const studentSections = sections.filter(s => s.batch_id === studentBatch);
+  const assignmentSections = sections.filter(s => s.batch_id === currentAssignment.batchId);
+  const assignmentSubjects = subjects.filter(sub => sub.section_id === currentAssignment.sectionId);
 
   const getAssignmentLabel = (assignment: { batchId: string; sectionId: string; subjectId: string }) => {
     const batch = batches.find(b => b.id === assignment.batchId);
@@ -202,7 +230,7 @@ const AuthPage = () => {
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-4">
-      <div className="w-full max-w-md animate-fade-in">
+      <div className="w-full max-w-md animate-fade-in text-foreground">
         <Button
           variant="ghost"
           className="mb-6"
@@ -301,15 +329,35 @@ const AuthPage = () => {
                         required
                       />
                     </div>
+                    <div className="space-y-2">
+                      <Label>Faculty / Department</Label>
+                      <Select value={studentFaculty} onValueChange={(v) => { setStudentFaculty(v); setStudentBatch(''); setStudentSection(''); }} required>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select faculty" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {faculties.map(f => (
+                            <SelectItem key={f.id} value={f.id}>
+                              {f.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
                         <Label>Batch</Label>
-                        <Select value={studentBatch} onValueChange={setStudentBatch} required>
+                        <Select
+                          value={studentBatch}
+                          onValueChange={(v) => { setStudentBatch(v); setStudentSection(''); }}
+                          disabled={!studentFaculty}
+                          required
+                        >
                           <SelectTrigger>
                             <SelectValue placeholder="Select batch" />
                           </SelectTrigger>
                           <SelectContent>
-                            {batches.map(batch => (
+                            {batches.filter(b => b.faculty_id === studentFaculty).map(batch => (
                               <SelectItem key={batch.id} value={batch.id}>
                                 {batch.name}
                               </SelectItem>
@@ -319,8 +367,8 @@ const AuthPage = () => {
                       </div>
                       <div className="space-y-2">
                         <Label>Section</Label>
-                        <Select 
-                          value={studentSection} 
+                        <Select
+                          value={studentSection}
                           onValueChange={setStudentSection}
                           disabled={!studentBatch}
                           required
@@ -329,7 +377,7 @@ const AuthPage = () => {
                             <SelectValue placeholder="Select section" />
                           </SelectTrigger>
                           <SelectContent>
-                            {filteredSections.map(section => (
+                            {studentSections.map(section => (
                               <SelectItem key={section.id} value={section.id}>
                                 {section.name}
                               </SelectItem>
@@ -380,16 +428,6 @@ const AuthPage = () => {
                       />
                     </div>
                     <div className="space-y-2">
-                      <Label htmlFor="teacherId">Teacher ID</Label>
-                      <Input
-                        id="teacherId"
-                        placeholder="TEA001"
-                        value={teacherId}
-                        onChange={(e) => setTeacherId(e.target.value)}
-                        required
-                      />
-                    </div>
-                    <div className="space-y-2">
                       <Label htmlFor="teacherEmail">University Email</Label>
                       <Input
                         id="teacherEmail"
@@ -401,15 +439,15 @@ const AuthPage = () => {
                       />
                     </div>
                     <div className="space-y-2">
-                      <Label>Department</Label>
-                      <Select value={teacherDepartment} onValueChange={setTeacherDepartment} required>
+                      <Label>Faculty / Department</Label>
+                      <Select value={teacherFaculty} onValueChange={setTeacherFaculty} required>
                         <SelectTrigger>
-                          <SelectValue placeholder="Select department" />
+                          <SelectValue placeholder="Select faculty" />
                         </SelectTrigger>
                         <SelectContent>
-                          {departments.map(dept => (
-                            <SelectItem key={dept.id} value={dept.id}>
-                              {dept.name}
+                          {faculties.map(f => (
+                            <SelectItem key={f.id} value={f.id}>
+                              {f.name}
                             </SelectItem>
                           ))}
                         </SelectContent>
@@ -444,12 +482,12 @@ const AuthPage = () => {
                       <p className="text-xs text-muted-foreground">
                         Add the batch, section, and subject combinations you will teach.
                       </p>
-                      
+
                       {teacherAssignments.length > 0 && (
                         <div className="flex flex-wrap gap-2 mb-3">
                           {teacherAssignments.map((assignment, index) => (
-                            <Badge 
-                              key={index} 
+                            <Badge
+                              key={index}
                               variant="secondary"
                               className="flex items-center gap-1 py-1"
                             >
@@ -467,11 +505,11 @@ const AuthPage = () => {
                       )}
 
                       <div className="grid grid-cols-3 gap-2">
-                        <Select 
-                          value={currentAssignment.batchId} 
-                          onValueChange={(v) => setCurrentAssignment({ ...currentAssignment, batchId: v, sectionId: '' })}
+                        <Select
+                          value={currentAssignment.batchId}
+                          onValueChange={(v) => setCurrentAssignment({ ...currentAssignment, batchId: v, sectionId: '', subjectId: '' })}
                         >
-                          <SelectTrigger className="text-xs">
+                          <SelectTrigger className="text-[10px] px-1 h-8">
                             <SelectValue placeholder="Batch" />
                           </SelectTrigger>
                           <SelectContent>
@@ -482,13 +520,13 @@ const AuthPage = () => {
                             ))}
                           </SelectContent>
                         </Select>
-                        <Select 
-                          value={currentAssignment.sectionId} 
-                          onValueChange={(v) => setCurrentAssignment({ ...currentAssignment, sectionId: v })}
+                        <Select
+                          value={currentAssignment.sectionId}
+                          onValueChange={(v) => setCurrentAssignment({ ...currentAssignment, sectionId: v, subjectId: '' })}
                           disabled={!currentAssignment.batchId}
                         >
-                          <SelectTrigger className="text-xs">
-                            <SelectValue placeholder="Section" />
+                          <SelectTrigger className="text-[10px] px-1 h-8">
+                            <SelectValue placeholder="Sect" />
                           </SelectTrigger>
                           <SelectContent>
                             {assignmentSections.map(section => (
@@ -498,15 +536,16 @@ const AuthPage = () => {
                             ))}
                           </SelectContent>
                         </Select>
-                        <Select 
-                          value={currentAssignment.subjectId} 
+                        <Select
+                          value={currentAssignment.subjectId}
                           onValueChange={(v) => setCurrentAssignment({ ...currentAssignment, subjectId: v })}
+                          disabled={!currentAssignment.sectionId}
                         >
-                          <SelectTrigger className="text-xs">
-                            <SelectValue placeholder="Subject" />
+                          <SelectTrigger className="text-[10px] px-1 h-8">
+                            <SelectValue placeholder="Subj" />
                           </SelectTrigger>
                           <SelectContent>
-                            {subjects.map(subject => (
+                            {assignmentSubjects.map(subject => (
                               <SelectItem key={subject.id} value={subject.id}>
                                 {subject.name}
                               </SelectItem>
@@ -518,10 +557,10 @@ const AuthPage = () => {
                         type="button"
                         variant="outline"
                         size="sm"
-                        className="w-full"
+                        className="w-full h-8 text-xs"
                         onClick={addAssignment}
                       >
-                        <Plus className="w-4 h-4 mr-2" />
+                        <Plus className="w-3 h-3 mr-1" />
                         Add Assignment
                       </Button>
                     </div>

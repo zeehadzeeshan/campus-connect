@@ -1,17 +1,34 @@
+import { useState, useEffect } from "react";
 import { useAuth } from "@/contexts/AuthContext";
-import { getStudents, batches, sections } from "@/data/mockData";
+import { api } from "@/services/api";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { User, Mail, Hash, Book, Layers, CheckCircle, XCircle, ScanFace } from "lucide-react";
+import { toast } from "sonner";
 
 const StudentProfile = () => {
     const { user } = useAuth();
-    const student = getStudents().find(s => s.email === user?.email);
+    const [student, setStudent] = useState<any>(null);
+    const [isLoading, setIsLoading] = useState(true);
 
-    const getBatchName = (id?: string) => batches.find(b => b.id === id)?.name || "N/A";
-    const getSectionName = (id?: string) => sections.find(s => s.id === id)?.name || "N/A";
+    useEffect(() => {
+        const fetchProfile = async () => {
+            if (!user?.id) return;
+            setIsLoading(true);
+            try {
+                const data = await api.getStudentByProfileId(user.id);
+                setStudent(data);
+            } catch (e) {
+                toast.error("Failed to load profile");
+            } finally {
+                setIsLoading(false);
+            }
+        };
+        fetchProfile();
+    }, [user?.id]);
 
-    if (!student) return <div>Student not found</div>;
+    if (isLoading) return <div className="py-12 text-center text-muted-foreground">Loading profile...</div>;
+    if (!student) return <div className="py-12 text-center text-muted-foreground">Student record not found. Please contact administrator.</div>;
 
     const ProfileItem = ({ icon: Icon, label, value, subValue }: any) => (
         <div className="flex items-center p-4 border rounded-lg bg-card hover:bg-muted/30 transition-colors">
@@ -47,17 +64,17 @@ const StudentProfile = () => {
                         <ProfileItem
                             icon={User}
                             label="Full Name"
-                            value={student.name}
+                            value={user.name}
                         />
                         <ProfileItem
                             icon={Hash}
                             label="Student ID"
-                            value={student.studentId}
+                            value={student.student_id}
                         />
                         <ProfileItem
                             icon={Mail}
                             label="Email Address"
-                            value={student.email}
+                            value={user.email}
                         />
                     </CardContent>
                 </Card>
@@ -73,12 +90,12 @@ const StudentProfile = () => {
                         <ProfileItem
                             icon={Book}
                             label="Batch"
-                            value={getBatchName(student.batchId)}
+                            value={student.section?.batch?.name || "N/A"}
                         />
                         <ProfileItem
                             icon={Layers}
                             label="Section"
-                            value={getSectionName(student.sectionId)}
+                            value={student.section?.name || "N/A"}
                         />
                     </CardContent>
                 </Card>
@@ -92,7 +109,7 @@ const StudentProfile = () => {
                         <CardDescription>Status of your biometric registration.</CardDescription>
                     </CardHeader>
                     <CardContent className="flex flex-col items-center justify-center py-6">
-                        {student.faceRegistered ? (
+                        {student.face_registered ? (
                             <div className="text-center space-y-3">
                                 <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto">
                                     <CheckCircle className="w-8 h-8 text-green-600" />
