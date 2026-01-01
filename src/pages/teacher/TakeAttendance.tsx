@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
-import { getTeachers, batches, sections, subjects, getStudents, attendanceRecords } from "@/data/mockData";
+import { getTeachers, batches, sections, subjects, getStudents, attendanceRecords, routines } from "@/data/mockData";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -15,6 +15,18 @@ const TakeAttendance = () => {
     const navigate = useNavigate();
     const teacher = getTeachers().find(t => t.email === user?.email);
     const assignedClasses = teacher?.assignedSubjects || [];
+
+    // ENFORCE ROUTINE: Filter classes to only those scheduled for TODAY
+    const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const today = days[new Date().getDay()];
+
+    // Find routines for this teacher for today
+    const todayRoutines = routines.filter(r => r.teacherId === teacher?.id && r.day === today);
+
+    // Filter assigned classes to only those in today's routine
+    const availableClasses = assignedClasses.filter(ac =>
+        todayRoutines.some(r => r.subjectId === ac.subjectId && r.batchId === ac.batchId && r.sectionId === ac.sectionId)
+    );
 
     // Steps: 'select' -> 'camera' -> 'verify' -> 'success'
     const [step, setStep] = useState<'select' | 'camera' | 'verify' | 'success'>('select');
@@ -87,23 +99,36 @@ const TakeAttendance = () => {
                 <Card>
                     <CardHeader>
                         <CardTitle>Class Selection</CardTitle>
+                        <CardDescription>
+                            Only classes scheduled for <strong>{today}</strong> are shown.
+                        </CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">
-                        <div className="space-y-2">
-                            <Label>Choose Class</Label>
-                            <Select value={selectedClassId} onValueChange={setSelectedClassId}>
-                                <SelectTrigger>
-                                    <SelectValue placeholder="Select class" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    {assignedClasses.map((ac) => (
-                                        <SelectItem key={ac.id} value={ac.id}>
-                                            {getSubjectName(ac.subjectId)} - {getBatchName(ac.batchId)} ({getSectionName(ac.sectionId)})
-                                        </SelectItem>
-                                    ))}
-                                </SelectContent>
-                            </Select>
-                        </div>
+                        {availableClasses.length > 0 ? (
+                            <div className="space-y-2">
+                                <Label>Choose Class</Label>
+                                <Select value={selectedClassId} onValueChange={setSelectedClassId}>
+                                    <SelectTrigger>
+                                        <SelectValue placeholder="Select class" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {availableClasses.map((ac) => (
+                                            <SelectItem key={ac.id} value={ac.id}>
+                                                {getSubjectName(ac.subjectId)} - {getBatchName(ac.batchId)} ({getSectionName(ac.sectionId)})
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                        ) : (
+                            <div className="flex flex-col items-center justify-center py-6 text-center text-muted-foreground border-2 border-dashed rounded-lg">
+                                <AlertCircle className="w-8 h-8 mb-2 opacity-50" />
+                                <p>No classes scheduled for today.</p>
+                                <Button variant="link" onClick={() => navigate('/teacher/routine')}>
+                                    Check or Set Routine
+                                </Button>
+                            </div>
+                        )}
                     </CardContent>
                     <CardFooter>
                         <Button className="w-full" onClick={handleStartCamera} disabled={!selectedClassId}>
