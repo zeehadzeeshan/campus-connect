@@ -25,6 +25,10 @@ import TakeAttendance from "./pages/teacher/TakeAttendance";
 import PastAttendance from "./pages/teacher/PastAttendance";
 import { Navigate } from "react-router-dom";
 
+import StudentLayout from "./layouts/StudentLayout";
+import StudentAttendance from "./pages/student/StudentAttendance";
+import StudentProfile from "./pages/student/StudentProfile";
+
 const queryClient = new QueryClient();
 
 const App = () => (
@@ -53,8 +57,6 @@ const App = () => (
               </Route>
             </Route>
 
-            {/* Placeholder routes - to be implemented */}
-            <Route path="/student" element={<div className="min-h-screen flex items-center justify-center"><h1 className="text-2xl">Student Dashboard - Coming Next</h1></div>} />
             {/* Protected Teacher Routes */}
             <Route element={<ProtectedRoute allowedRole="teacher" />}>
               <Route path="/teacher" element={<TeacherLayout />}>
@@ -67,8 +69,15 @@ const App = () => (
               </Route>
             </Route>
 
-            {/* Placeholder routes - to be implemented */}
-            <Route path="/student" element={<div className="min-h-screen flex items-center justify-center"><h1 className="text-2xl">Student Dashboard - Coming Next</h1></div>} />
+            {/* Protected Student Routes */}
+            <Route element={<ProtectedRoute allowedRole="student" />}>
+              <Route path="/student" element={<StudentLayout />}>
+                <Route index element={<Navigate to="/student/attendance" replace />} />
+                <Route path="attendance" element={<StudentAttendance />} />
+                <Route path="profile" element={<StudentProfile />} />
+              </Route>
+            </Route>
+
             <Route path="*" element={<NotFound />} />
           </Routes>
         </BrowserRouter>
