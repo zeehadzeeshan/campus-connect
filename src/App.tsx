@@ -9,6 +9,15 @@ import AuthPage from "./pages/AuthPage";
 import AdminLogin from "./pages/AdminLogin";
 import FaceRegistration from "./pages/FaceRegistration";
 import NotFound from "./pages/NotFound";
+import ProtectedRoute from "./components/ProtectedRoute";
+import AdminLayout from "./layouts/AdminLayout";
+import Dashboard from "./pages/admin/Dashboard";
+import AcademicStructure from "./pages/admin/AcademicStructure";
+import UserManagement from "./pages/admin/UserManagement";
+import RoutineManagement from "./pages/admin/RoutineManagement";
+import AttendanceManagement from "./pages/admin/AttendanceManagement";
+import Settings from "./pages/admin/Settings";
+import { Navigate } from "react-router-dom";
 
 const queryClient = new QueryClient();
 
@@ -22,12 +31,25 @@ const App = () => (
           <Routes>
             <Route path="/" element={<RoleSelection />} />
             <Route path="/auth" element={<AuthPage />} />
-            <Route path="/admin" element={<AdminLogin />} />
+            <Route path="/admin/login" element={<AdminLogin />} />
             <Route path="/face-registration" element={<FaceRegistration />} />
+
+            {/* Protected Admin Routes */}
+            <Route element={<ProtectedRoute allowedRole="admin" />}>
+              <Route path="/admin" element={<AdminLayout />}>
+                <Route index element={<Navigate to="/admin/dashboard" replace />} />
+                <Route path="dashboard" element={<Dashboard />} />
+                <Route path="academic" element={<AcademicStructure />} />
+                <Route path="users" element={<UserManagement />} />
+                <Route path="routines" element={<RoutineManagement />} />
+                <Route path="attendance" element={<AttendanceManagement />} />
+                <Route path="settings" element={<Settings />} />
+              </Route>
+            </Route>
+
             {/* Placeholder routes - to be implemented */}
             <Route path="/student" element={<div className="min-h-screen flex items-center justify-center"><h1 className="text-2xl">Student Dashboard - Coming Next</h1></div>} />
             <Route path="/teacher" element={<div className="min-h-screen flex items-center justify-center"><h1 className="text-2xl">Teacher Dashboard - Coming Next</h1></div>} />
-            <Route path="/admin/dashboard" element={<div className="min-h-screen flex items-center justify-center"><h1 className="text-2xl">Admin Dashboard - Coming Next</h1></div>} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </BrowserRouter>

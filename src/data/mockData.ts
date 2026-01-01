@@ -1,404 +1,234 @@
-import { Department, Batch, Section, Subject, Student, Teacher, Admin, Routine, AttendanceRecord } from '@/types';
 
-export const departments: Department[] = [
-  { id: 'dept-1', name: 'Computer Science', code: 'CSE' },
-  { id: 'dept-2', name: 'Electrical Engineering', code: 'EEE' },
-  { id: 'dept-3', name: 'Mechanical Engineering', code: 'ME' },
-  { id: 'dept-4', name: 'Civil Engineering', code: 'CE' },
-  { id: 'dept-5', name: 'Business Administration', code: 'BBA' },
-  { id: 'dept-6', name: 'Mathematics', code: 'MATH' },
-  { id: 'dept-7', name: 'Physics', code: 'PHY' },
-  { id: 'dept-8', name: 'Chemistry', code: 'CHEM' },
+// Types
+export interface Department {
+  id: string;
+  name: string;
+}
+
+export interface Batch {
+  id: string;
+  name: string;
+  departmentId: string;
+}
+
+export interface Section {
+  id: string;
+  name: string;
+  batchId: string;
+}
+
+export interface Subject {
+  id: string;
+  code: string;
+  name: string;
+  departmentId: string;
+}
+
+export interface User {
+  id: string;
+  name: string;
+  email: string;
+  role: 'student' | 'teacher' | 'admin';
+  status: 'active' | 'disabled';
+  password?: string; // Added for AuthContext
+  isActive?: boolean;
+  createdAt?: string;
+  // Student specific
+  studentId?: string;
+  batchId?: string;
+  sectionId?: string;
+  faceRegistered?: boolean;
+  // Teacher specific
+  teacherId?: string;
+  departmentId?: string; // Added for AuthContext
+  assignedSubjects?: { id: string; batchId: string; sectionId: string; subjectId: string }[]; // Updated structure
+}
+
+export interface Routine {
+  id: string;
+  day: string;
+  startTime: string;
+  endTime: string;
+  subjectId: string;
+  teacherId: string;
+  batchId: string;
+  sectionId: string;
+  roomId?: string;
+}
+
+export interface AttendanceRecord {
+  id: string;
+  date: string;
+  studentId: string;
+  subjectId: string;
+  status: 'present' | 'absent';
+  timestamp: string;
+}
+
+// Initial Mock Data
+export let departments: Department[] = [
+  { id: '1', name: 'Computer Science & Engineering' },
+  { id: '2', name: 'Electrical Engineering' },
+  { id: '3', name: 'Business Administration' },
 ];
 
-export const batches: Batch[] = [
-  { id: 'batch-1', name: 'Batch 2021', year: 2021 },
-  { id: 'batch-2', name: 'Batch 2022', year: 2022 },
-  { id: 'batch-3', name: 'Batch 2023', year: 2023 },
-  { id: 'batch-4', name: 'Batch 2024', year: 2024 },
-  { id: 'batch-5', name: 'Batch 2025', year: 2025 },
-  { id: 'batch-6', name: 'Batch 2020', year: 2020 },
-  { id: 'batch-7', name: 'Batch 2019', year: 2019 },
-  { id: 'batch-8', name: 'Batch 2018', year: 2018 },
+export let batches: Batch[] = [
+  { id: '1', name: 'Batch 2023', departmentId: '1' },
+  { id: '2', name: 'Batch 2024', departmentId: '1' },
+  { id: '3', name: 'Batch 2023', departmentId: '3' },
 ];
 
-export const sections: Section[] = [
-  { id: 'sec-1', name: 'Section A', batchId: 'batch-1' },
-  { id: 'sec-2', name: 'Section B', batchId: 'batch-1' },
-  { id: 'sec-3', name: 'Section A', batchId: 'batch-2' },
-  { id: 'sec-4', name: 'Section B', batchId: 'batch-2' },
-  { id: 'sec-5', name: 'Section C', batchId: 'batch-2' },
-  { id: 'sec-6', name: 'Section A', batchId: 'batch-3' },
-  { id: 'sec-7', name: 'Section B', batchId: 'batch-3' },
-  { id: 'sec-8', name: 'Section A', batchId: 'batch-4' },
-  { id: 'sec-9', name: 'Section B', batchId: 'batch-4' },
-  { id: 'sec-10', name: 'Section A', batchId: 'batch-5' },
+export let sections: Section[] = [
+  { id: '1', name: 'Section A', batchId: '1' },
+  { id: '2', name: 'Section B', batchId: '1' },
 ];
 
-export const subjects: Subject[] = [
-  { id: 'sub-1', name: 'Data Structures', code: 'CSE201', departmentId: 'dept-1' },
-  { id: 'sub-2', name: 'Algorithms', code: 'CSE301', departmentId: 'dept-1' },
-  { id: 'sub-3', name: 'Database Systems', code: 'CSE302', departmentId: 'dept-1' },
-  { id: 'sub-4', name: 'Circuit Theory', code: 'EEE101', departmentId: 'dept-2' },
-  { id: 'sub-5', name: 'Digital Electronics', code: 'EEE201', departmentId: 'dept-2' },
-  { id: 'sub-6', name: 'Thermodynamics', code: 'ME101', departmentId: 'dept-3' },
-  { id: 'sub-7', name: 'Fluid Mechanics', code: 'ME201', departmentId: 'dept-3' },
-  { id: 'sub-8', name: 'Structural Analysis', code: 'CE201', departmentId: 'dept-4' },
-  { id: 'sub-9', name: 'Financial Management', code: 'BBA301', departmentId: 'dept-5' },
-  { id: 'sub-10', name: 'Calculus', code: 'MATH101', departmentId: 'dept-6' },
+export let subjects: Subject[] = [
+  { id: '1', code: 'CSE-101', name: 'Introduction to Programming', departmentId: '1' },
+  { id: '2', code: 'CSE-201', name: 'Data Structures', departmentId: '1' },
+  { id: '3', code: 'EEE-101', name: 'Basic Electronics', departmentId: '2' },
 ];
 
-export let students: Student[] = [
-  {
-    id: 'stu-1',
-    name: 'John Smith',
-    studentId: 'STU2021001',
-    email: 'john.smith@university.edu',
-    batchId: 'batch-1',
-    sectionId: 'sec-1',
-    password: 'password123',
-    faceRegistered: true,
-    isActive: true,
-    createdAt: '2021-09-01',
-  },
-  {
-    id: 'stu-2',
-    name: 'Emily Johnson',
-    studentId: 'STU2021002',
-    email: 'emily.johnson@university.edu',
-    batchId: 'batch-1',
-    sectionId: 'sec-1',
-    password: 'password123',
-    faceRegistered: true,
-    isActive: true,
-    createdAt: '2021-09-01',
-  },
-  {
-    id: 'stu-3',
-    name: 'Michael Brown',
-    studentId: 'STU2021003',
-    email: 'michael.brown@university.edu',
-    batchId: 'batch-1',
-    sectionId: 'sec-2',
-    password: 'password123',
-    faceRegistered: true,
-    isActive: true,
-    createdAt: '2021-09-01',
-  },
-  {
-    id: 'stu-4',
-    name: 'Sarah Davis',
-    studentId: 'STU2022001',
-    email: 'sarah.davis@university.edu',
-    batchId: 'batch-2',
-    sectionId: 'sec-3',
-    password: 'password123',
-    faceRegistered: true,
-    isActive: true,
-    createdAt: '2022-09-01',
-  },
-  {
-    id: 'stu-5',
-    name: 'David Wilson',
-    studentId: 'STU2022002',
-    email: 'david.wilson@university.edu',
-    batchId: 'batch-2',
-    sectionId: 'sec-3',
-    password: 'password123',
-    faceRegistered: false,
-    isActive: false,
-    createdAt: '2022-09-01',
-  },
-  {
-    id: 'stu-6',
-    name: 'Jessica Martinez',
-    studentId: 'STU2022003',
-    email: 'jessica.martinez@university.edu',
-    batchId: 'batch-2',
-    sectionId: 'sec-4',
-    password: 'password123',
-    faceRegistered: true,
-    isActive: true,
-    createdAt: '2022-09-01',
-  },
-  {
-    id: 'stu-7',
-    name: 'Chris Anderson',
-    studentId: 'STU2023001',
-    email: 'chris.anderson@university.edu',
-    batchId: 'batch-3',
-    sectionId: 'sec-6',
-    password: 'password123',
-    faceRegistered: true,
-    isActive: true,
-    createdAt: '2023-09-01',
-  },
-  {
-    id: 'stu-8',
-    name: 'Amanda Taylor',
-    studentId: 'STU2023002',
-    email: 'amanda.taylor@university.edu',
-    batchId: 'batch-3',
-    sectionId: 'sec-6',
-    password: 'password123',
-    faceRegistered: true,
-    isActive: true,
-    createdAt: '2023-09-01',
-  },
+// Split users for easier export matches
+export let students: User[] = [
+  { id: '1', name: 'John Doe', email: 'john@uni.edu', role: 'student', status: 'active', studentId: '230101', batchId: '1', sectionId: '1', faceRegistered: true, password: 'password', isActive: true },
+  { id: '2', name: 'Jane Smith', email: 'jane@uni.edu', role: 'student', status: 'active', studentId: '230102', batchId: '1', sectionId: '1', faceRegistered: false, password: 'password', isActive: true },
+  { id: '3', name: 'Alice Johnson', email: 'alice@uni.edu', role: 'student', status: 'disabled', studentId: '230103', batchId: '1', sectionId: '2', faceRegistered: true, password: 'password', isActive: false },
 ];
 
-export let teachers: Teacher[] = [
-  {
-    id: 'tea-1',
-    name: 'Dr. Robert Miller',
-    teacherId: 'TEA001',
-    email: 'robert.miller@university.edu',
-    departmentId: 'dept-1',
-    password: 'password123',
-    assignments: [
-      { id: 'assign-1', batchId: 'batch-1', sectionId: 'sec-1', subjectId: 'sub-1' },
-      { id: 'assign-2', batchId: 'batch-1', sectionId: 'sec-2', subjectId: 'sub-1' },
-      { id: 'assign-3', batchId: 'batch-2', sectionId: 'sec-3', subjectId: 'sub-2' },
-    ],
-    isActive: true,
-    createdAt: '2020-01-15',
-  },
-  {
-    id: 'tea-2',
-    name: 'Prof. Susan Lee',
-    teacherId: 'TEA002',
-    email: 'susan.lee@university.edu',
-    departmentId: 'dept-1',
-    password: 'password123',
-    assignments: [
-      { id: 'assign-4', batchId: 'batch-2', sectionId: 'sec-3', subjectId: 'sub-3' },
-      { id: 'assign-5', batchId: 'batch-2', sectionId: 'sec-4', subjectId: 'sub-3' },
-    ],
-    isActive: true,
-    createdAt: '2019-08-20',
-  },
-  {
-    id: 'tea-3',
-    name: 'Dr. James White',
-    teacherId: 'TEA003',
-    email: 'james.white@university.edu',
-    departmentId: 'dept-2',
-    password: 'password123',
-    assignments: [
-      { id: 'assign-6', batchId: 'batch-1', sectionId: 'sec-1', subjectId: 'sub-4' },
-      { id: 'assign-7', batchId: 'batch-3', sectionId: 'sec-6', subjectId: 'sub-5' },
-    ],
-    isActive: true,
-    createdAt: '2018-03-10',
-  },
-  {
-    id: 'tea-4',
-    name: 'Prof. Maria Garcia',
-    teacherId: 'TEA004',
-    email: 'maria.garcia@university.edu',
-    departmentId: 'dept-3',
-    password: 'password123',
-    assignments: [
-      { id: 'assign-8', batchId: 'batch-1', sectionId: 'sec-1', subjectId: 'sub-6' },
-    ],
-    isActive: true,
-    createdAt: '2017-06-05',
-  },
-  {
-    id: 'tea-5',
-    name: 'Dr. William Chen',
-    teacherId: 'TEA005',
-    email: 'william.chen@university.edu',
-    departmentId: 'dept-6',
-    password: 'password123',
-    assignments: [
-      { id: 'assign-9', batchId: 'batch-2', sectionId: 'sec-3', subjectId: 'sub-10' },
-      { id: 'assign-10', batchId: 'batch-3', sectionId: 'sec-6', subjectId: 'sub-10' },
-    ],
-    isActive: true,
-    createdAt: '2016-09-12',
-  },
-  {
-    id: 'tea-6',
-    name: 'Prof. Linda Kim',
-    teacherId: 'TEA006',
-    email: 'linda.kim@university.edu',
-    departmentId: 'dept-5',
-    password: 'password123',
-    assignments: [
-      { id: 'assign-11', batchId: 'batch-1', sectionId: 'sec-2', subjectId: 'sub-9' },
-    ],
-    isActive: true,
-    createdAt: '2020-02-28',
-  },
-  {
-    id: 'tea-7',
-    name: 'Dr. Thomas Brown',
-    teacherId: 'TEA007',
-    email: 'thomas.brown@university.edu',
-    departmentId: 'dept-4',
-    password: 'password123',
-    assignments: [
-      { id: 'assign-12', batchId: 'batch-2', sectionId: 'sec-4', subjectId: 'sub-8' },
-    ],
-    isActive: true,
-    createdAt: '2019-11-15',
-  },
-  {
-    id: 'tea-8',
-    name: 'Prof. Jennifer Adams',
-    teacherId: 'TEA008',
-    email: 'jennifer.adams@university.edu',
-    departmentId: 'dept-3',
-    password: 'password123',
-    assignments: [
-      { id: 'assign-13', batchId: 'batch-3', sectionId: 'sec-7', subjectId: 'sub-7' },
-    ],
-    isActive: true,
-    createdAt: '2021-04-20',
-  },
+export let teachers: User[] = [
+  { id: '101', name: 'Prof. Alan Turing', email: 'alan@uni.edu', role: 'teacher', status: 'active', teacherId: 'T-001', password: 'password', isActive: true, assignedSubjects: [{ id: 'ass1', batchId: '1', sectionId: '1', subjectId: '1' }] },
+  { id: '102', name: 'Dr. Grace Hopper', email: 'grace@uni.edu', role: 'teacher', status: 'active', teacherId: 'T-002', password: 'password', isActive: true, assignedSubjects: [{ id: 'ass2', batchId: '1', sectionId: '1', subjectId: '1' }] },
 ];
 
-export const admins: Admin[] = [
-  {
-    id: 'admin-1',
-    email: 'admin@university.edu',
-    password: 'admin123',
-    name: 'System Administrator',
-  },
+export let admins: User[] = [
+  { id: '999', name: 'Super Admin', email: 'admin@university.edu', role: 'admin', status: 'active', password: 'admin123' },
 ];
+
+// Combined users getter for Admin Panel compatibility
+export const getUsers = () => [...students, ...teachers, ...admins];
+export const getStudents = () => [...students];
+export const getTeachers = () => [...teachers];
 
 export let routines: Routine[] = [
-  {
-    id: 'routine-1',
-    batchId: 'batch-1',
-    sectionId: 'sec-1',
-    subjectId: 'sub-1',
-    teacherId: 'tea-1',
-    days: ['Monday', 'Wednesday', 'Friday'],
-    startTime: '09:00',
-    endTime: '10:30',
-  },
-  {
-    id: 'routine-2',
-    batchId: 'batch-1',
-    sectionId: 'sec-1',
-    subjectId: 'sub-4',
-    teacherId: 'tea-3',
-    days: ['Tuesday', 'Thursday'],
-    startTime: '11:00',
-    endTime: '12:30',
-  },
-  {
-    id: 'routine-3',
-    batchId: 'batch-2',
-    sectionId: 'sec-3',
-    subjectId: 'sub-2',
-    teacherId: 'tea-1',
-    days: ['Monday', 'Wednesday'],
-    startTime: '14:00',
-    endTime: '15:30',
-  },
-  {
-    id: 'routine-4',
-    batchId: 'batch-2',
-    sectionId: 'sec-3',
-    subjectId: 'sub-3',
-    teacherId: 'tea-2',
-    days: ['Tuesday', 'Thursday', 'Friday'],
-    startTime: '09:00',
-    endTime: '10:30',
-  },
+  { id: '1', day: 'Monday', startTime: '09:00', endTime: '10:30', subjectId: '1', teacherId: '101', batchId: '1', sectionId: '1', roomId: '301' },
+  { id: '2', day: 'Monday', startTime: '10:30', endTime: '12:00', subjectId: '2', teacherId: '101', batchId: '1', sectionId: '1', roomId: 'Lab-2' },
 ];
 
 export let attendanceRecords: AttendanceRecord[] = [
-  {
-    id: 'att-1',
-    studentId: 'stu-1',
-    routineId: 'routine-1',
-    date: '2025-12-30',
-    status: 'present',
-    markedBy: 'tea-1',
-    markedAt: '2025-12-30T09:15:00',
-  },
-  {
-    id: 'att-2',
-    studentId: 'stu-2',
-    routineId: 'routine-1',
-    date: '2025-12-30',
-    status: 'present',
-    markedBy: 'tea-1',
-    markedAt: '2025-12-30T09:15:00',
-  },
-  {
-    id: 'att-3',
-    studentId: 'stu-1',
-    routineId: 'routine-1',
-    date: '2025-12-28',
-    status: 'present',
-    markedBy: 'tea-1',
-    markedAt: '2025-12-28T09:15:00',
-  },
-  {
-    id: 'att-4',
-    studentId: 'stu-2',
-    routineId: 'routine-1',
-    date: '2025-12-28',
-    status: 'absent',
-    markedBy: 'tea-1',
-    markedAt: '2025-12-28T09:15:00',
-  },
-  {
-    id: 'att-5',
-    studentId: 'stu-4',
-    routineId: 'routine-3',
-    date: '2025-12-30',
-    status: 'present',
-    markedBy: 'tea-1',
-    markedAt: '2025-12-30T14:15:00',
-  },
-  {
-    id: 'att-6',
-    studentId: 'stu-4',
-    routineId: 'routine-4',
-    date: '2025-12-31',
-    status: 'present',
-    markedBy: 'tea-2',
-    markedAt: '2025-12-31T09:10:00',
-  },
+  { id: '1', date: '2023-10-25', studentId: '1', subjectId: '1', status: 'present', timestamp: '2023-10-25T09:05:00' },
+  { id: '2', date: '2023-10-25', studentId: '2', subjectId: '1', status: 'absent', timestamp: '2023-10-25T09:00:00' },
 ];
 
-// Helper functions to add/update data
-export const addStudent = (student: Student) => {
-  students = [...students, student];
+
+// Individual Exports to satisfy AuthContext
+export const addStudent = (student: User) => {
+  students.push(student);
+  return student;
 };
 
-export const updateStudent = (id: string, updates: Partial<Student>) => {
-  students = students.map(s => s.id === id ? { ...s, ...updates } : s);
+export const addTeacher = (teacher: User) => {
+  teachers.push(teacher);
+  return teacher;
 };
 
-export const addTeacher = (teacher: Teacher) => {
-  teachers = [...teachers, teacher];
+export const updateStudent = (id: string, data: Partial<User>) => {
+  const index = students.findIndex(s => s.id === id);
+  if (index !== -1) {
+    students[index] = { ...students[index], ...data };
+  }
 };
 
-export const updateTeacher = (id: string, updates: Partial<Teacher>) => {
-  teachers = teachers.map(t => t.id === id ? { ...t, ...updates } : t);
-};
+// Data Access Layer (Simulation) - Keeping this for Admin Panel usage
+export const mockData = {
+  // Stats
+  getStats: () => ({
+    totalStudents: students.length,
+    totalTeachers: teachers.length,
+    totalBatches: batches.length,
+    totalSubjects: subjects.length,
+    todaySessions: routines.filter(r => r.day === 'Monday').length,
+  }),
 
-export const addRoutine = (routine: Routine) => {
-  routines = [...routines, routine];
-};
+  // Departments
+  getDepartments: () => [...departments],
+  addDepartment: (dept: Omit<Department, 'id'>) => {
+    const newDept = { ...dept, id: Math.random().toString(36).substr(2, 9) };
+    departments = [...departments, newDept];
+    return newDept;
+  },
+  updateDepartment: (id: string, name: string) => {
+    departments = departments.map(d => d.id === id ? { ...d, name } : d);
+  },
+  deleteDepartment: (id: string) => {
+    departments = departments.filter(d => d.id !== id);
+  },
 
-export const addAttendanceRecord = (record: AttendanceRecord) => {
-  attendanceRecords = [...attendanceRecords, record];
-};
+  // Batches
+  getBatches: () => [...batches],
+  addBatch: (batch: Omit<Batch, 'id'>) => {
+    const newBatch = { ...batch, id: Math.random().toString(36).substr(2, 9) };
+    batches = [...batches, newBatch];
+    return newBatch;
+  },
+  updateBatch: (id: string, name: string) => {
+    batches = batches.map(b => b.id === id ? { ...b, name } : b);
+  },
+  deleteBatch: (id: string) => {
+    batches = batches.filter(b => b.id !== id);
+  },
 
-export const updateAttendanceRecord = (id: string, updates: Partial<AttendanceRecord>) => {
-  attendanceRecords = attendanceRecords.map(r => r.id === id ? { ...r, ...updates } : r);
-};
+  // Sections
+  getSections: () => [...sections],
+  addSection: (section: Omit<Section, 'id'>) => {
+    const newSection = { ...section, id: Math.random().toString(36).substr(2, 9) };
+    sections = [...sections, newSection];
+    return newSection;
+  },
+  updateSection: (id: string, name: string) => {
+    sections = sections.map(s => s.id === id ? { ...s, name } : s);
+  },
+  deleteSection: (id: string) => {
+    sections = sections.filter(s => s.id !== id);
+  },
 
-// Getter functions for reactive updates
-export const getStudents = () => students;
-export const getTeachers = () => teachers;
-export const getRoutines = () => routines;
-export const getAttendanceRecords = () => attendanceRecords;
+  // Subjects
+  getSubjects: () => [...subjects],
+  addSubject: (subject: Omit<Subject, 'id'>) => {
+    const newSubject = { ...subject, id: Math.random().toString(36).substr(2, 9) };
+    subjects = [...subjects, newSubject];
+    return newSubject;
+  },
+  updateSubject: (id: string, updates: Partial<Subject>) => {
+    subjects = subjects.map(s => s.id === id ? { ...s, ...updates } : s);
+  },
+  deleteSubject: (id: string) => {
+    subjects = subjects.filter(s => s.id !== id);
+  },
+
+  // Users - Modified to key off the simplified arrays
+  getUsers: () => getUsers(),
+  toggleUserStatus: (id: string) => {
+    // Check students
+    let sIndex = students.findIndex(u => u.id === id);
+    if (sIndex !== -1) {
+      students[sIndex].status = students[sIndex].status === 'active' ? 'disabled' : 'active';
+      return;
+    }
+    // Check teachers
+    let tIndex = teachers.findIndex(u => u.id === id);
+    if (tIndex !== -1) {
+      teachers[tIndex].status = teachers[tIndex].status === 'active' ? 'disabled' : 'active';
+      return;
+    }
+  },
+
+  // Routines
+  getRoutines: () => [...routines],
+  deleteRoutine: (id: string) => {
+    routines = routines.filter(r => r.id !== id);
+  },
+
+  // Attendance
+  getAttendance: () => [...attendanceRecords],
+};
