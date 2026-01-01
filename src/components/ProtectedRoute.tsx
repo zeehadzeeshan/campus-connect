@@ -18,7 +18,7 @@ const ProtectedRoute = ({ allowedRole }: ProtectedRouteProps) => {
         // Redirect them to their appropriate dashboard
         if (role === 'admin') return <Navigate to="/admin/dashboard" replace />;
         // if (role === 'student') return <Navigate to="/student/dashboard" replace />;
-        // if (role === 'teacher') return <Navigate to="/teacher/dashboard" replace />;
+        if (role === 'teacher') return <Navigate to="/teacher/dashboard" replace />;
         return <Navigate to="/" replace />;
     }
 

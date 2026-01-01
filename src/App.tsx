@@ -17,6 +17,12 @@ import UserManagement from "./pages/admin/UserManagement";
 import RoutineManagement from "./pages/admin/RoutineManagement";
 import AttendanceManagement from "./pages/admin/AttendanceManagement";
 import Settings from "./pages/admin/Settings";
+import TeacherLayout from "./layouts/TeacherLayout";
+import TeacherDashboard from "./pages/teacher/TeacherDashboard";
+import Batches from "./pages/teacher/Batches";
+import Routine from "./pages/teacher/Routine";
+import TakeAttendance from "./pages/teacher/TakeAttendance";
+import PastAttendance from "./pages/teacher/PastAttendance";
 import { Navigate } from "react-router-dom";
 
 const queryClient = new QueryClient();
@@ -49,7 +55,20 @@ const App = () => (
 
             {/* Placeholder routes - to be implemented */}
             <Route path="/student" element={<div className="min-h-screen flex items-center justify-center"><h1 className="text-2xl">Student Dashboard - Coming Next</h1></div>} />
-            <Route path="/teacher" element={<div className="min-h-screen flex items-center justify-center"><h1 className="text-2xl">Teacher Dashboard - Coming Next</h1></div>} />
+            {/* Protected Teacher Routes */}
+            <Route element={<ProtectedRoute allowedRole="teacher" />}>
+              <Route path="/teacher" element={<TeacherLayout />}>
+                <Route index element={<Navigate to="/teacher/dashboard" replace />} />
+                <Route path="dashboard" element={<TeacherDashboard />} />
+                <Route path="batches" element={<Batches />} />
+                <Route path="routine" element={<Routine />} />
+                <Route path="take-attendance" element={<TakeAttendance />} />
+                <Route path="past-attendance" element={<PastAttendance />} />
+              </Route>
+            </Route>
+
+            {/* Placeholder routes - to be implemented */}
+            <Route path="/student" element={<div className="min-h-screen flex items-center justify-center"><h1 className="text-2xl">Student Dashboard - Coming Next</h1></div>} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </BrowserRouter>
