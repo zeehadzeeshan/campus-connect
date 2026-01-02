@@ -8,71 +8,150 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2, Calendar as CalendarIcon, Clock } from "lucide-react";
 import { toast } from "sonner";
+import { Checkbox } from "@/components/ui/checkbox";
 
 const Routine = () => {
-    const { user } = useAuth();
+    const { user, loading: authLoading } = useAuth();
     const [routines, setRoutines] = useState<any[]>([]);
-    const [assignedClasses, setAssignedClasses] = useState<any[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [isDialogOpen, setIsDialogOpen] = useState(false);
 
+    // Hierarchical Data
+    const [faculties, setFaculties] = useState<any[]>([]);
+    const [batches, setBatches] = useState<any[]>([]);
+    const [sections, setSections] = useState<any[]>([]);
+    const [subjects, setSubjects] = useState<any[]>([]);
+
     // Form state
-    const [selectedAssignmentId, setSelectedAssignmentId] = useState("");
-    const [day, setDay] = useState("");
+    const [selectedFacultyId, setSelectedFacultyId] = useState("");
+    const [selectedBatchId, setSelectedBatchId] = useState("");
+    const [selectedSectionId, setSelectedSectionId] = useState("");
+    const [selectedSubjectId, setSelectedSubjectId] = useState("");
+    const [selectedDays, setSelectedDays] = useState<string[]>([]);
     const [startTime, setStartTime] = useState("");
     const [endTime, setEndTime] = useState("");
     const [roomId, setRoomId] = useState("");
 
     const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
-    const fetchData = async () => {
-        if (!user?.id) return;
+    const [isStructureLoading, setIsStructureLoading] = useState(false);
+    const [structureError, setStructureError] = useState<string | null>(null);
+
+    const fetchGlobalData = async () => {
+        setIsStructureLoading(true);
+        setStructureError(null);
+
+        const fetchWithTimeout = async (promise: Promise<any>, name: string) => {
+            const timeout = new Promise((_, reject) =>
+                setTimeout(() => reject(new Error(`${name} fetch timed out`)), 5000)
+            );
+            return Promise.race([promise, timeout]);
+        };
+
+        try {
+            console.log('🔄 Routine: Starting sequential structure fetch...');
+
+            // Remove the inner .catch suppression to see the actual error (e.g. Permission Denied)
+            const f = await fetchWithTimeout(api.getFaculties(), 'Faculties');
+            setFaculties(f || []);
+
+            const b = await fetchWithTimeout(api.getBatches(), 'Batches');
+            setBatches(b || []);
+
+            const s = await fetchWithTimeout(api.getSections(), 'Sections');
+            setSections(s || []);
+
+            const sub = await fetchWithTimeout(api.getSubjects(), 'Subjects');
+            setSubjects(sub || []);
+
+            console.log('✅ Routine: Structure load complete', {
+                faculties: f?.length || 0
+            });
+
+            if (!f || f.length === 0) {
+                setStructureError("No departments found in database. Check RLS policies.");
+            }
+
+        } catch (e: any) {
+            console.error('❌ Routine: Global meta-load failed', e);
+            // This will now show the actual Supabase error if RLS or connection fails
+            const errorMsg = e.message || e.details || "Failed to load database structure";
+            setStructureError(errorMsg);
+            toast.error(`Database Error: ${errorMsg}`);
+        } finally {
+            setIsStructureLoading(false);
+        }
+    };
+
+    const fetchTeacherRoutines = async () => {
+        if (!user?.teacher_id) {
+            console.warn('⚠️ Routine: Skipping fetch, no teacher_id yet', user);
+            return;
+        }
+
         setIsLoading(true);
         try {
-            const [assignments, allRoutines] = await Promise.all([
-                api.getTeacherAssignments(user.id),
-                api.getRoutines()
-            ]);
-            setAssignedClasses(assignments || []);
-            // Filter routines for this teacher manually if getRoutines doesn't support it or just keep it simple
-            setRoutines(allRoutines?.filter((r: any) => r.teacher_id === user.id) || []);
-        } catch (e) {
-            toast.error("Failed to load routines");
+            console.log('🔄 Routine: Fetching for teacher_id:', user.teacher_id);
+            const allRoutines = await api.getRoutines({ teacher_id: user.teacher_id });
+            console.log('✅ Routine: Data received:', allRoutines);
+
+            setRoutines(allRoutines || []);
+
+            if (allRoutines && allRoutines.length > 0) {
+                toast.info(`Loaded ${allRoutines.length} routines`);
+            }
+        } catch (e: any) {
+            console.error('❌ Routine: Failed to load routines', e);
+            toast.error(`Load error: ${e.message || "Unknown error"}`);
         } finally {
             setIsLoading(false);
         }
     };
 
     useEffect(() => {
-        fetchData();
-    }, [user?.id]);
+        if (!authLoading) {
+            fetchGlobalData();
+        }
+    }, [authLoading]);
+
+    useEffect(() => {
+        if (!authLoading && user?.teacher_id) {
+            fetchTeacherRoutines();
+        } else if (!authLoading) {
+            setIsLoading(false);
+        }
+    }, [authLoading, user?.teacher_id]);
+
+    const filteredBatches = batches.filter(b => b.faculty_id === selectedFacultyId);
+    const filteredSections = sections.filter(s => s.batch_id === selectedBatchId);
+    const filteredSubjects = subjects.filter(sub => sub.section_id === selectedSectionId);
 
     const handleSave = async () => {
-        if (!selectedAssignmentId || !day || !startTime || !endTime) {
-            toast.error("Please fill in all required fields");
+        if (!selectedSubjectId || selectedDays.length === 0) {
+            toast.error("Please select a subject and at least one day");
             return;
         }
 
-        const assignment = assignedClasses.find(c => c.id === selectedAssignmentId);
-        if (!assignment) return;
-
         try {
-            const newRoutine = {
-                day_of_week: day,
-                start_time: startTime,
-                end_time: endTime,
-                subject_id: assignment.subject_id,
-                teacher_id: user.id,
-                room_id: roomId || 'TBD'
-            };
+            const promises = selectedDays.map(day => {
+                const newRoutine = {
+                    day_of_week: day,
+                    start_time: startTime || null,
+                    end_time: endTime || null,
+                    subject_id: selectedSubjectId,
+                    teacher_id: user.teacher_id,
+                    room_id: roomId || 'TBD'
+                };
+                return api.createRoutine(newRoutine);
+            });
 
-            await api.createRoutine(newRoutine);
+            await Promise.all(promises);
             setIsDialogOpen(false);
             resetForm();
             toast.success("Routine added successfully");
-            fetchData();
+            fetchTeacherRoutines();
         } catch (e) {
             toast.error("Failed to add routine. Check for conflicts.");
         }
@@ -82,23 +161,34 @@ const Routine = () => {
         try {
             await api.deleteResource('routines', id);
             toast.success("Routine removed");
-            fetchData();
+            fetchTeacherRoutines();
         } catch (e) {
             toast.error("Failed to delete routine");
         }
     };
 
     const resetForm = () => {
-        setSelectedAssignmentId("");
-        setDay("");
+        setSelectedFacultyId("");
+        setSelectedBatchId("");
+        setSelectedSectionId("");
+        setSelectedSubjectId("");
+        setSelectedDays([]);
         setStartTime("");
         setEndTime("");
         setRoomId("");
     };
 
+    const toggleDay = (day: string) => {
+        setSelectedDays(prev =>
+            prev.includes(day) ? prev.filter(d => d !== day) : [...prev, day]
+        );
+    };
+
     const sortedRoutines = [...routines].sort((a, b) => {
         const dayDiff = days.indexOf(a.day_of_week) - days.indexOf(b.day_of_week);
         if (dayDiff !== 0) return dayDiff;
+        if (!a.start_time) return -1;
+        if (!b.start_time) return 1;
         return a.start_time.localeCompare(b.start_time);
     });
 
@@ -118,48 +208,105 @@ const Routine = () => {
                             Set Routine
                         </Button>
                     </DialogTrigger>
-                    <DialogContent>
+                    <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
                         <DialogHeader>
                             <DialogTitle>Add New Routine</DialogTitle>
                         </DialogHeader>
                         <div className="grid gap-4 py-4">
-                            <div className="grid gap-2">
-                                <Label>Class (Subject - Batch)</Label>
-                                <Select value={selectedAssignmentId} onValueChange={setSelectedAssignmentId}>
-                                    <SelectTrigger>
-                                        <SelectValue placeholder="Select class" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        {assignedClasses.map((ac) => (
-                                            <SelectItem key={ac.id} value={ac.id}>
-                                                {ac.subject?.name} - {ac.subject?.section?.batch?.name} ({ac.subject?.section?.name})
-                                            </SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
+                            {/* Hierarchy Selection */}
+                            <div className="space-y-3">
+                                <div className="grid gap-2">
+                                    <Label>Department</Label>
+                                    <Select value={selectedFacultyId} onValueChange={(v) => { setSelectedFacultyId(v); setSelectedBatchId(""); setSelectedSectionId(""); setSelectedSubjectId(""); }}>
+                                        <SelectTrigger>
+                                            <SelectValue placeholder="Select Department" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {isStructureLoading ? (
+                                                <SelectItem value="loading" disabled>Loading departments...</SelectItem>
+                                            ) : structureError ? (
+                                                <SelectItem value="error" disabled className="text-destructive font-medium">
+                                                    {structureError}
+                                                </SelectItem>
+                                            ) : faculties.length > 0 ? (
+                                                faculties.map(f => <SelectItem key={f.id} value={f.id}>{f.name}</SelectItem>)
+                                            ) : (
+                                                <SelectItem value="none" disabled>No departments found</SelectItem>
+                                            )}
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+
+                                <div className="grid gap-2">
+                                    <Label>Batch</Label>
+                                    <Select value={selectedBatchId} onValueChange={(v) => { setSelectedBatchId(v); setSelectedSectionId(""); setSelectedSubjectId(""); }} disabled={!selectedFacultyId}>
+                                        <SelectTrigger>
+                                            <SelectValue placeholder="Select Batch" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {filteredBatches.map(b => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+
+                                <div className="grid gap-2">
+                                    <Label>Section</Label>
+                                    <Select value={selectedSectionId} onValueChange={(v) => { setSelectedSectionId(v); setSelectedSubjectId(""); }} disabled={!selectedBatchId}>
+                                        <SelectTrigger>
+                                            <SelectValue placeholder="Select Section" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {filteredSections.map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+
+                                <div className="grid gap-2">
+                                    <Label>Subject</Label>
+                                    <Select value={selectedSubjectId} onValueChange={setSelectedSubjectId} disabled={!selectedSectionId}>
+                                        <SelectTrigger>
+                                            <SelectValue placeholder="Select Subject" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {filteredSubjects.map(sub => <SelectItem key={sub.id} value={sub.id}>{sub.name}</SelectItem>)}
+                                        </SelectContent>
+                                    </Select>
+                                </div>
                             </div>
 
+                            {/* Multi-day Selection */}
                             <div className="grid gap-2">
-                                <Label>Day</Label>
-                                <Select value={day} onValueChange={setDay}>
-                                    <SelectTrigger>
-                                        <SelectValue placeholder="Select day" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        {days.map((d) => (
-                                            <SelectItem key={d} value={d}>{d}</SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
+                                <Label>Select Days</Label>
+                                <div className="grid grid-cols-2 gap-2 p-3 border rounded-md">
+                                    {days.map(d => (
+                                        <div key={d} className="flex items-center space-x-2">
+                                            <Checkbox
+                                                id={`day-${d}`}
+                                                checked={selectedDays.includes(d)}
+                                                onCheckedChange={() => toggleDay(d)}
+                                            />
+                                            <label htmlFor={`day-${d}`} className="text-sm font-medium leading-none cursor-pointer">
+                                                {d}
+                                            </label>
+                                        </div>
+                                    ))}
+                                </div>
                             </div>
 
+                            {/* Optional Time & Room */}
                             <div className="grid grid-cols-2 gap-4">
                                 <div className="grid gap-2">
-                                    <Label>Start Time</Label>
+                                    <Label className="flex items-center gap-1">
+                                        <Clock className="w-3 h-3" /> Start Time
+                                        <span className="text-[10px] text-muted-foreground ml-auto">(Optional)</span>
+                                    </Label>
                                     <Input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} />
                                 </div>
                                 <div className="grid gap-2">
-                                    <Label>End Time</Label>
+                                    <Label className="flex items-center gap-1">
+                                        <Clock className="w-3 h-3" /> End Time
+                                        <span className="text-[10px] text-muted-foreground ml-auto">(Optional)</span>
+                                    </Label>
                                     <Input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} />
                                 </div>
                             </div>
@@ -171,7 +318,7 @@ const Routine = () => {
                         </div>
                         <DialogFooter>
                             <Button variant="outline" onClick={() => setIsDialogOpen(false)}>Cancel</Button>
-                            <Button onClick={handleSave}>Save Routine</Button>
+                            <Button onClick={handleSave} disabled={!selectedSubjectId || selectedDays.length === 0}>Save Routine</Button>
                         </DialogFooter>
                     </DialogContent>
                 </Dialog>
@@ -200,7 +347,13 @@ const Routine = () => {
                                     sortedRoutines.map((routine) => (
                                         <TableRow key={routine.id}>
                                             <TableCell className="font-medium">{routine.day_of_week}</TableCell>
-                                            <TableCell>{routine.start_time?.slice(0, 5)} - {routine.end_time?.slice(0, 5)}</TableCell>
+                                            <TableCell>
+                                                {routine.start_time ? (
+                                                    `${routine.start_time.slice(0, 5)} - ${routine.end_time?.slice(0, 5)}`
+                                                ) : (
+                                                    <span className="text-muted-foreground text-xs italic">Flexible</span>
+                                                )}
+                                            </TableCell>
                                             <TableCell>{routine.subject?.name}</TableCell>
                                             <TableCell>
                                                 {routine.subject?.section?.batch?.name} - {routine.subject?.section?.name}

@@ -103,14 +103,25 @@ export const api = {
   },
 
   getTeachers: async () => {
-    // Get profiles with role 'teacher'
-    const { data: profiles, error } = await supabase
-      .from('profiles')
-      .select('*, teacher_assignments(*)')
-      .eq('role', 'teacher');
+    const { data, error } = await supabase
+      .from('teachers')
+      .select(`
+        *,
+        profile:profiles!profile_id(email, name, role)
+      `);
 
     if (error) throw error;
-    return profiles;
+    return data;
+  },
+
+  getTeacherByProfileId: async (profileId: string) => {
+    const { data, error } = await supabase
+      .from('teachers')
+      .select('*, profile:profiles!profile_id(*)')
+      .eq('profile_id', profileId)
+      .single();
+    if (error) throw error;
+    return data;
   },
 
   getStudentByProfileId: async (profileId: string) => {
@@ -146,7 +157,8 @@ export const api = {
       .from('students')
       .select(`
         *,
-        profile:profiles!profile_id(email, name)
+        profile:profiles!profile_id(email, name),
+        face_embedding
       `)
       .eq('section_id', sectionId);
     if (error) throw error;
@@ -177,7 +189,9 @@ export const api = {
           batch:batches(name, faculty_id)
         )
       ),
-      teacher:profiles!teacher_id(name) 
+      teacher:teachers!teacher_id(
+        profile:profiles!profile_id(name)
+      ) 
     `);
 
     if (filters?.teacher_id) query = query.eq('teacher_id', filters.teacher_id);
@@ -263,7 +277,7 @@ export const api = {
   getStats: async () => {
     const [students, teachers, batches, subjects, routines] = await Promise.all([
       supabase.from('students').select('*', { count: 'exact', head: true }),
-      supabase.from('profiles').select('*', { count: 'exact', head: true }).eq('role', 'teacher'),
+      supabase.from('teachers').select('*', { count: 'exact', head: true }),
       supabase.from('batches').select('*', { count: 'exact', head: true }),
       supabase.from('subjects').select('*', { count: 'exact', head: true }),
       supabase.from('routines').select('*', { count: 'exact', head: true }),

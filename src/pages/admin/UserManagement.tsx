@@ -58,7 +58,7 @@ const UserManagement = () => {
     }, []);
 
     const toggleStatus = async (id: string, role: string, currentStatus: boolean) => {
-        const table = role === 'student' ? 'students' : 'profiles';
+        const table = role === 'student' ? 'students' : 'teachers';
         try {
             await api.updateResource(table, id, { is_active: !currentStatus });
             toast({ title: "Updated", description: "Status updated successfully." });
@@ -75,8 +75,9 @@ const UserManagement = () => {
     );
 
     const filteredTeachers = teachers.filter(t =>
-        t.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        t.email?.toLowerCase().includes(searchTerm.toLowerCase())
+        t.profile?.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        t.profile?.email?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        t.employee_id?.toLowerCase().includes(searchTerm.toLowerCase())
     );
 
     return (
@@ -190,15 +191,15 @@ const UserManagement = () => {
                             <TableBody>
                                 {filteredTeachers.map((teacher) => (
                                     <TableRow key={teacher.id}>
-                                        <TableCell className="font-mono">T-{teacher.id.slice(0, 4)}</TableCell>
+                                        <TableCell className="font-mono">{teacher.employee_id || `T-${teacher.id.slice(0, 4)}`}</TableCell>
                                         <TableCell>
                                             <div className="flex flex-col">
-                                                <span className="font-medium">{teacher.name}</span>
-                                                <span className="text-xs text-muted-foreground">{teacher.email}</span>
+                                                <span className="font-medium">{teacher.profile?.name}</span>
+                                                <span className="text-xs text-muted-foreground">{teacher.profile?.email}</span>
                                             </div>
                                         </TableCell>
                                         <TableCell className="hidden md:table-cell">
-                                            {teacher.teacher_assignments?.length || 0} Subjects
+                                            {teacher.faculty?.name || 'General'}
                                         </TableCell>
                                         <TableCell>
                                             {teacher.is_active ? (

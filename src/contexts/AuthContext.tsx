@@ -4,6 +4,7 @@ import { supabase } from '@/lib/supabase';
 import { api } from '@/services/api';
 
 interface AuthContextType extends AuthState {
+  loading: boolean;
   selectedRole: UserRole | null;
   setSelectedRole: (role: UserRole | null) => void;
   login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
@@ -59,7 +60,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           }
 
           if (profile) {
-            setUser({ ...session.user, ...profile });
+            console.log('✅ Auth init: profile found', profile.role);
+            let extraData = {};
+            try {
+              if (profile.role === 'teacher') {
+                const teacher = await api.getTeacherByProfileId(profile.id);
+                if (teacher) {
+                  console.log('✅ Auth init: teacher metadata found', teacher.id);
+                  extraData = { teacher_id: teacher.id };
+                }
+              } else if (profile.role === 'student') {
+                const student = await api.getStudentByProfileId(profile.id);
+                if (student) {
+                  console.log('✅ Auth init: student metadata found', student.id);
+                  extraData = { student_id: student.id };
+                }
+              }
+            } catch (metaErr) {
+              console.warn('⚠️ Auth init: failed to fetch metadata', metaErr);
+            }
+            setUser({ ...session.user, ...profile, ...extraData });
             setRole(profile.role as UserRole);
             setIsAuthenticated(true);
           }
@@ -86,7 +106,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           .single();
 
         if (profile) {
-          setUser({ ...session.user, ...profile });
+          console.log('✅ Auth changed: profile found', profile.role);
+          let extraData = {};
+          try {
+            if (profile.role === 'teacher') {
+              const teacher = await api.getTeacherByProfileId(profile.id);
+              if (teacher) {
+                console.log('✅ Auth changed: teacher metadata found', teacher.id);
+                extraData = { teacher_id: teacher.id };
+              }
+            } else if (profile.role === 'student') {
+              const student = await api.getStudentByProfileId(profile.id);
+              if (student) {
+                console.log('✅ Auth changed: student metadata found', student.id);
+                extraData = { student_id: student.id };
+              }
+            }
+          } catch (metaErr) {
+            console.warn('⚠️ Auth changed: failed to fetch metadata', metaErr);
+          }
+          setUser({ ...session.user, ...profile, ...extraData });
           setRole(profile.role as UserRole);
           setIsAuthenticated(true);
         }
@@ -103,7 +142,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback(async (email: string, password: string): Promise<{ success: boolean; error?: string }> => {
     try {
       console.log('🔐 login start:', email);
-      const { data, error } = await api.signIn(email, password);
+
+      const loginPromise = api.signIn(email, password);
+      const timeoutPromise = new Promise<{ data: any, error: any }>((_, reject) =>
+        setTimeout(() => reject(new Error("Login attempt timed out (15s). Check your internet or Supabase status.")), 15000)
+      );
+
+      const { data, error } = await Promise.race([loginPromise, timeoutPromise]) as { data: any, error: any };
+
       if (error) {
         console.error('❌ login auth error:', error);
         throw error;
@@ -133,6 +179,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       console.log('🎉 login complete!');
       return { success: true };
     } catch (err: any) {
+      console.error('❌ login process failed:', err);
       return { success: false, error: err.message || 'Login failed' };
     }
   }, [selectedRole]);
@@ -181,14 +228,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         console.log('✅ student insert success');
         setPendingStudentId(userId);
       } else if (data.role === 'teacher') {
+        const teacherObj = {
+          profile_id: userId,
+          faculty_id: data.facultyId || data.faculty_id,
+          employee_id: data.employeeId || data.employee_id,
+          is_active: true
+        };
+        console.log('🍎 teacher insert:', teacherObj);
+        const { data: newTeacher, error: teacherError } = await supabase
+          .from('teachers')
+          .insert([teacherObj])
+          .select()
+          .single();
+
+        if (teacherError) {
+          console.error('❌ teacher insert error:', teacherError);
+          throw teacherError;
+        }
+        console.log('✅ teacher insert success:', newTeacher.id);
+
         // Teacher assignments
         if (data.assignments && data.assignments.length > 0) {
           const assignments = data.assignments.map((a: any) => ({
-            teacher_id: userId,
+            teacher_id: newTeacher.id, // Using the TEACHER UUID, not PROFILE UUID
             subject_id: a.subjectId
           }));
+          console.log('📚 assigning subjects:', assignments.length);
           const { error: assignError } = await supabase.from('teacher_assignments').insert(assignments);
-          if (assignError) throw assignError;
+          if (assignError) {
+            console.error('❌ teacher assignments error:', assignError);
+            throw assignError;
+          }
+          console.log('✅ teacher assignments success');
         }
       }
 
@@ -253,6 +324,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       value={{
         user,
         role,
+        loading,
         isAuthenticated,
         selectedRole,
         setSelectedRole,

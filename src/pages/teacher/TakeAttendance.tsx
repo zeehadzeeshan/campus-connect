@@ -6,72 +6,233 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { Camera, CheckCircle, AlertCircle, RefreshCw } from "lucide-react";
+import { Camera, CheckCircle, AlertCircle, RefreshCw, UserCheck } from "lucide-react";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
+import * as faceapi from 'face-api.js';
+import { useRef } from "react";
 
 const TakeAttendance = () => {
-    const { user } = useAuth();
+    const { user, loading: authLoading } = useAuth();
     const navigate = useNavigate();
 
     // Steps: 'select' -> 'camera' -> 'verify' -> 'success'
     const [step, setStep] = useState<'select' | 'camera' | 'verify' | 'success'>('select');
     const [routines, setRoutines] = useState<any[]>([]);
     const [selectedRoutineId, setSelectedRoutineId] = useState("");
+    const [faculties, setFaculties] = useState<any[]>([]);
+    const [batches, setBatches] = useState<any[]>([]);
+    const [sections, setSections] = useState<any[]>([]);
+    const [subjects, setSubjects] = useState<any[]>([]);
+
+    const [selectedFacultyId, setSelectedFacultyId] = useState("");
+    const [selectedBatchId, setSelectedBatchId] = useState("");
+    const [selectedSectionId, setSelectedSectionId] = useState("");
+    const [selectedSubjectId, setSelectedSubjectId] = useState("");
+
     const [attendanceData, setAttendanceData] = useState<{ studentId: string; status: 'present' | 'absent'; name: string; student_id: string }[]>([]);
     const [isLoading, setIsLoading] = useState(true);
+    const [modelsLoaded, setModelsLoaded] = useState(false);
+    const [isDetecting, setIsDetecting] = useState(false);
+    const [detectedCount, setDetectedCount] = useState(0);
+    const [recognizedCount, setRecognizedCount] = useState(0);
+    const [totalStudents, setTotalStudents] = useState(0);
+
+    const videoRef = useRef<HTMLVideoElement>(null);
+    const canvasRef = useRef<HTMLCanvasElement>(null);
+    const detectionInterval = useRef<any>(null);
+
+    // Load Models on mount
+    useEffect(() => {
+        const loadModels = async () => {
+            try {
+                const MODEL_URL = '/models';
+                await Promise.all([
+                    faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
+                    faceapi.nets.faceLandmark68TinyNet.loadFromUri(MODEL_URL),
+                    faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)
+                ]);
+                setModelsLoaded(true);
+                console.log('✅ TakeAttendance: Models loaded');
+            } catch (e) {
+                console.error("❌ TakeAttendance: Model loading error:", e);
+                toast.error("Failed to load Face AI models");
+            }
+        };
+        loadModels();
+    }, []);
 
     const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
     const today = days[new Date().getDay()];
 
     useEffect(() => {
-        const fetchRoutines = async () => {
-            if (!user?.id) return;
+        const fetchStructure = async () => {
+            if (authLoading) return;
             setIsLoading(true);
             try {
-                // Fetch today's routine for this teacher
-                const data = await api.getRoutines({ teacher_id: user.id, day: today });
-                setRoutines(data || []);
+                const [f, b, s, sub] = await Promise.all([
+                    api.getFaculties(),
+                    api.getBatches(),
+                    api.getSections(),
+                    api.getSubjects()
+                ]);
+                setFaculties(f);
+                setBatches(b);
+                setSections(s);
+                setSubjects(sub);
             } catch (e) {
-                toast.error("Failed to load routines");
+                toast.error("Failed to load department structure");
             } finally {
                 setIsLoading(false);
             }
         };
-        fetchRoutines();
-    }, [user?.id]);
+        fetchStructure();
+    }, [authLoading]);
+
+    const filteredBatches = batches.filter(b => b.faculty_id === selectedFacultyId);
+    const filteredSections = sections.filter(s => s.batch_id === selectedBatchId);
+    const filteredSubjects = subjects.filter(sub => sub.section_id === selectedSectionId);
+
+    // Euclidean distance for face matching
+    const euclideanDistance = (a: Float32Array, b: number[]): number => {
+        let sum = 0;
+        for (let i = 0; i < a.length; i++) {
+            sum += Math.pow(a[i] - b[i], 2);
+        }
+        return Math.sqrt(sum);
+    };
+
+    const MATCH_THRESHOLD = 0.6; // Lower = stricter matching
+    const recognizedStudentsRef = useRef<Set<string>>(new Set());
+
+    const startDetectionLoop = (students: any[]) => {
+        if (!videoRef.current) return;
+        setIsDetecting(true);
+        setDetectedCount(0);
+        setRecognizedCount(0);
+        setTotalStudents(students.length);
+        recognizedStudentsRef.current = new Set();
+
+        // Filter students with valid embeddings
+        const studentsWithEmbeddings = students.filter(s => {
+            if (!s.face_embedding) return false;
+            try {
+                const embedding = typeof s.face_embedding === 'string'
+                    ? JSON.parse(s.face_embedding)
+                    : s.face_embedding;
+                return Array.isArray(embedding) && embedding.length === 128;
+            } catch {
+                return false;
+            }
+        });
+
+        console.log(`🔍 Starting recognition with ${studentsWithEmbeddings.length}/${students.length} students having embeddings`);
+
+        detectionInterval.current = setInterval(async () => {
+            if (!videoRef.current || !canvasRef.current) return;
+
+            try {
+                // Detect faces WITH descriptors for matching
+                const detections = await faceapi
+                    .detectAllFaces(videoRef.current, new faceapi.TinyFaceDetectorOptions())
+                    .withFaceLandmarks(true)
+                    .withFaceDescriptors();
+
+                setDetectedCount(detections.length);
+
+                // Match each detected face against student embeddings
+                for (const detection of detections) {
+                    const detectedDescriptor = detection.descriptor;
+
+                    for (const student of studentsWithEmbeddings) {
+                        if (recognizedStudentsRef.current.has(student.id)) continue;
+
+                        const storedEmbedding = typeof student.face_embedding === 'string'
+                            ? JSON.parse(student.face_embedding)
+                            : student.face_embedding;
+
+                        const distance = euclideanDistance(detectedDescriptor, storedEmbedding);
+
+                        if (distance < MATCH_THRESHOLD) {
+                            console.log(`✅ Matched: ${student.profile?.name} (distance: ${distance.toFixed(3)})`);
+                            recognizedStudentsRef.current.add(student.id);
+                            setRecognizedCount(recognizedStudentsRef.current.size);
+                        }
+                    }
+                }
+
+                // Draw detection boxes on canvas
+                if (canvasRef.current && videoRef.current) {
+                    const displaySize = { width: videoRef.current.offsetWidth, height: videoRef.current.offsetHeight };
+                    faceapi.matchDimensions(canvasRef.current, displaySize);
+                    const resizedDetections = faceapi.resizeResults(detections, displaySize);
+                    canvasRef.current.getContext('2d')?.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+                    faceapi.draw.drawDetections(canvasRef.current, resizedDetections);
+                }
+            } catch (e) {
+                console.error('Detection error:', e);
+            }
+        }, 500);
+
+        // Auto-complete after 10 seconds of scanning
+        setTimeout(() => {
+            stopDetectionLoop();
+
+            const recognized = recognizedStudentsRef.current;
+            console.log(`📊 Recognition complete: ${recognized.size}/${students.length} students recognized`);
+
+            const finalAttendance = students.map((s: any) => ({
+                studentId: s.id,
+                name: s.profile?.name || "Unknown",
+                student_id: s.student_id,
+                status: recognized.has(s.id) ? 'present' as const : 'absent' as const,
+                confidence: recognized.has(s.id) ? 0.95 : 0
+            }));
+
+            setAttendanceData(finalAttendance);
+            setStep('verify');
+            toast.success(`Recognized ${recognized.size} out of ${students.length} students`);
+        }, 10000);
+    };
+
+    const stopDetectionLoop = () => {
+        setIsDetecting(false);
+        if (detectionInterval.current) {
+            clearInterval(detectionInterval.current);
+            detectionInterval.current = null;
+        }
+        if (videoRef.current && videoRef.current.srcObject) {
+            const stream = videoRef.current.srcObject as MediaStream;
+            stream.getTracks().forEach(track => track.stop());
+        }
+    };
 
     const handleStartCamera = async () => {
-        if (!selectedRoutineId) {
-            toast.error("Please select a class first");
+        if (!selectedSubjectId) {
+            toast.error("Please select a subject first");
             return;
         }
 
-        const routine = routines.find(r => r.id === selectedRoutineId);
-        if (!routine) return;
-
-        setStep('camera');
-
-        // Fetch students for this section
         try {
-            const students = await api.getStudentsBySection(routine.subject?.section_id);
+            const students = await api.getStudentsBySection(selectedSectionId);
+            setStep('camera');
 
-            // Simulate scanning process
-            setTimeout(() => {
-                // Randomly mark some as present for the demo
-                const initialAttendance = students.map((s: any) => ({
-                    studentId: s.id,
-                    name: s.profile?.name || "Unknown",
-                    student_id: s.student_id,
-                    status: (Math.random() > 0.2 ? 'present' : 'absent') as 'present' | 'absent'
-                }));
-
-                setAttendanceData(initialAttendance);
-                setStep('verify');
-            }, 3000);
+            // Wait for video element to mount
+            setTimeout(async () => {
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                    if (videoRef.current) {
+                        videoRef.current.srcObject = stream;
+                        startDetectionLoop(students);
+                    }
+                } catch (err) {
+                    console.error("Camera access error:", err);
+                    toast.error("Could not access camera");
+                    setStep('select');
+                }
+            }, 100);
         } catch (e) {
             toast.error("Failed to load students for this section");
-            setStep('select');
         }
     };
 
@@ -84,18 +245,17 @@ const TakeAttendance = () => {
     };
 
     const handleSubmit = async () => {
-        const routine = routines.find(r => r.id === selectedRoutineId);
-        if (!routine) return;
+        if (!selectedSubjectId) return;
 
         setIsLoading(true);
         try {
             const logs = attendanceData.map(d => ({
                 student_id: d.studentId,
-                routine_id: selectedRoutineId,
-                subject_id: routine.subject_id,
+                routine_id: null, // No specific routine matches manual session
+                subject_id: selectedSubjectId,
                 date: new Date().toISOString().split('T')[0],
                 status: d.status,
-                confidence: d.status === 'present' ? 0.95 : 0 // Demo values
+                confidence: d.status === 'present' ? 0.95 : 0
             }));
 
             await api.logAttendance(logs);
@@ -110,7 +270,10 @@ const TakeAttendance = () => {
 
     const reset = () => {
         setStep('select');
-        setSelectedRoutineId("");
+        setSelectedFacultyId("");
+        setSelectedBatchId("");
+        setSelectedSectionId("");
+        setSelectedSubjectId("");
         setAttendanceData([]);
     };
 
@@ -126,41 +289,64 @@ const TakeAttendance = () => {
                     <CardHeader>
                         <CardTitle>Class Selection</CardTitle>
                         <CardDescription>
-                            Showing classes for <strong>{today}</strong>.
+                            Select the academic structure for this session.
                         </CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">
-                        {!isLoading ? (
-                            routines.length > 0 ? (
-                                <div className="space-y-2">
-                                    <Label>Choose Class</Label>
-                                    <Select value={selectedRoutineId} onValueChange={setSelectedRoutineId}>
-                                        <SelectTrigger>
-                                            <SelectValue placeholder="Select class" />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                            {routines.map((r) => (
-                                                <SelectItem key={r.id} value={r.id}>
-                                                    {r.subject?.name} ({r.subject?.section?.name}) - {r.start_time?.slice(0, 5)}
-                                                </SelectItem>
-                                            ))}
-                                        </SelectContent>
-                                    </Select>
-                                </div>
-                            ) : (
-                                <div className="flex flex-col items-center justify-center py-6 text-center text-muted-foreground border-2 border-dashed rounded-lg">
-                                    <AlertCircle className="w-8 h-8 mb-2 opacity-50" />
-                                    <p>No classes scheduled for you today.</p>
-                                </div>
-                            )
-                        ) : (
-                            <div className="text-center py-6">Loading routine...</div>
-                        )}
+                        <div className="grid gap-4">
+                            <div className="grid gap-2">
+                                <Label>Department</Label>
+                                <Select value={selectedFacultyId} onValueChange={(v) => { setSelectedFacultyId(v); setSelectedBatchId(""); setSelectedSectionId(""); setSelectedSubjectId(""); }}>
+                                    <SelectTrigger>
+                                        <SelectValue placeholder="Select Department" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {faculties.map(f => <SelectItem key={f.id} value={f.id}>{f.name}</SelectItem>)}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+
+                            <div className="grid gap-2">
+                                <Label>Batch</Label>
+                                <Select value={selectedBatchId} onValueChange={(v) => { setSelectedBatchId(v); setSelectedSectionId(""); setSelectedSubjectId(""); }} disabled={!selectedFacultyId}>
+                                    <SelectTrigger>
+                                        <SelectValue placeholder="Select Batch" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {filteredBatches.map(b => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+
+                            <div className="grid gap-2">
+                                <Label>Section</Label>
+                                <Select value={selectedSectionId} onValueChange={(v) => { setSelectedSectionId(v); setSelectedSubjectId(""); }} disabled={!selectedBatchId}>
+                                    <SelectTrigger>
+                                        <SelectValue placeholder="Select Section" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {filteredSections.map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+
+                            <div className="grid gap-2">
+                                <Label>Subject</Label>
+                                <Select value={selectedSubjectId} onValueChange={setSelectedSubjectId} disabled={!selectedSectionId}>
+                                    <SelectTrigger>
+                                        <SelectValue placeholder="Select Subject" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {filteredSubjects.map(sub => <SelectItem key={sub.id} value={sub.id}>{sub.name}</SelectItem>)}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                        </div>
                     </CardContent>
                     <CardFooter>
-                        <Button className="w-full" onClick={handleStartCamera} disabled={!selectedRoutineId || isLoading}>
+                        <Button className="w-full" onClick={handleStartCamera} disabled={!selectedSubjectId || isLoading}>
                             <Camera className="mr-2 h-4 w-4" />
-                            Start Camera
+                            {isLoading ? "Loading..." : "Start Camera"}
                         </Button>
                     </CardFooter>
                 </Card>
@@ -171,17 +357,59 @@ const TakeAttendance = () => {
     if (step === 'camera') {
         return (
             <div className="max-w-2xl mx-auto text-center space-y-6">
-                <h1 className="text-2xl font-bold">Scanning Class...</h1>
-                <div className="relative aspect-video bg-black rounded-lg overflow-hidden flex items-center justify-center">
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/50 to-transparent" />
-                    <div className="animate-pulse flex flex-col items-center gap-4 z-10">
-                        <RefreshCw className="w-12 h-12 text-primary animate-spin" />
-                        <span className="text-white font-medium">Detecting faces...</span>
-                    </div>
-                    {/* Mock camera overlay */}
-                    <div className="absolute inset-0 border-2 border-primary/30 m-8 rounded-lg" />
+                <div className="space-y-2">
+                    <h1 className="text-2xl font-bold">Scanning Class...</h1>
+                    <p className="text-muted-foreground">Keep the camera steady to detect students.</p>
                 </div>
-                <p className="text-muted-foreground">Please keep the camera steady.</p>
+
+                <div className="relative aspect-video bg-black rounded-lg overflow-hidden border-4 border-primary/20">
+                    <video
+                        ref={videoRef}
+                        autoPlay
+                        muted
+                        playsInline
+                        className="absolute inset-0 w-full h-full object-cover scale-x-[-1]"
+                    />
+                    <canvas ref={canvasRef} className="absolute inset-0 w-full h-full pointer-events-none" />
+
+                    <div className="absolute inset-x-0 bottom-0 p-4 bg-gradient-to-t from-black/80 to-transparent">
+                        <div className="flex items-center justify-between text-white">
+                            <div className="flex items-center gap-2">
+                                <div className="w-3 h-3 rounded-full bg-red-500 animate-pulse" />
+                                <span className="font-mono text-sm uppercase tracking-wider">Live Scanning</span>
+                            </div>
+                            <div className="flex items-center gap-4">
+                                <div className="flex items-center gap-2 bg-blue-500/20 px-3 py-1 rounded-full border border-blue-400/30">
+                                    <Camera className="w-4 h-4 text-blue-400" />
+                                    <span className="font-medium">{detectedCount} Faces</span>
+                                </div>
+                                <div className="flex items-center gap-2 bg-green-500/20 px-3 py-1 rounded-full border border-green-400/30">
+                                    <UserCheck className="w-4 h-4 text-green-400" />
+                                    <span className="font-medium">{recognizedCount}/{totalStudents} Matched</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
+                        <div className="w-1/2 h-2/3 border-2 border-primary/30 rounded-lg flex items-center justify-center">
+                            <div className="w-full h-1 bg-primary/20 animate-scan shadow-[0_0_15px_rgba(var(--primary),0.5)]" />
+                        </div>
+                    </div>
+                </div>
+
+                <div className="bg-muted/50 rounded-lg p-4">
+                    <div className="text-center">
+                        <p className="text-sm text-muted-foreground">Scanning will complete in 10 seconds...</p>
+                        <p className="text-lg font-semibold text-primary mt-1">{recognizedCount} students recognized so far</p>
+                    </div>
+                </div>
+
+                <div className="flex justify-center gap-4">
+                    <Button variant="outline" onClick={() => { stopDetectionLoop(); setStep('select'); }}>
+                        Cancel Scan
+                    </Button>
+                </div>
             </div>
         );
     }

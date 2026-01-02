@@ -32,12 +32,16 @@ const PastAttendance = () => {
     const [isLoading, setIsLoading] = useState(true);
 
     const fetchData = async () => {
-        if (!user?.id) return;
+        if (!user?.teacher_id) {
+            console.warn('⚠️ PastAttendance: No teacher_id found');
+            setIsLoading(false);
+            return;
+        }
         setIsLoading(true);
         try {
             const [history, assignments] = await Promise.all([
-                api.getAttendanceHistory({ teacher_id: user.id }),
-                api.getTeacherAssignments(user.id)
+                api.getAttendanceHistory({ teacher_id: user.teacher_id }),
+                api.getTeacherAssignments(user.teacher_id)
             ]);
             setAllRecords(history || []);
             setAssignedClasses(assignments || []);
@@ -50,7 +54,7 @@ const PastAttendance = () => {
 
     useEffect(() => {
         fetchData();
-    }, [user?.id]);
+    }, [user?.teacher_id]);
 
     // Group records into sessions by (Subject + Date)
     const sessions = useMemo(() => {
@@ -150,11 +154,21 @@ const PastAttendance = () => {
                                 </SelectTrigger>
                                 <SelectContent>
                                     <SelectItem value="all">All Subjects</SelectItem>
+                                    {/* Show assigned classes */}
                                     {assignedClasses.map(ac => (
                                         <SelectItem key={ac.subject_id} value={ac.subject_id}>
                                             {ac.subject?.name}
                                         </SelectItem>
                                     ))}
+                                    {/* Show unique subjects from history that aren't in assignments (e.g. manual sessions) */}
+                                    {sessions
+                                        .filter(s => !assignedClasses.some(ac => ac.subject_id === s.subjectId))
+                                        .map(s => (
+                                            <SelectItem key={s.subjectId} value={s.subjectId}>
+                                                {s.subjectName} (Manual)
+                                            </SelectItem>
+                                        ))
+                                    }
                                 </SelectContent>
                             </Select>
                         </div>

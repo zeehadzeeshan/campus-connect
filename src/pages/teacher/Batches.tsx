@@ -26,10 +26,14 @@ const Batches = () => {
 
     useEffect(() => {
         const fetchData = async () => {
-            if (!user?.id) return;
+            if (!user?.teacher_id) {
+                console.warn('⚠️ Batches: No teacher_id found');
+                setIsLoading(false);
+                return;
+            }
             setIsLoading(true);
             try {
-                const data = await api.getTeacherAssignments(user.id);
+                const data = await api.getTeacherAssignments(user.teacher_id);
                 setAssignedClasses(data || []);
             } catch (e) {
                 toast({ title: "Error", description: "Failed to load assigned classes", variant: "destructive" });
@@ -38,7 +42,7 @@ const Batches = () => {
             }
         };
         fetchData();
-    }, [user?.id]);
+    }, [user?.teacher_id]);
 
     const handleClassClick = async (assignment: any) => {
         setSelectedClass(assignment);

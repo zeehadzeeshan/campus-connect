@@ -35,34 +35,47 @@ export interface TeachingAssignment {
 export interface Student {
   id: string;
   name: string;
-  studentId: string;
+  studentId: string; // University Roll
+  student_id?: string; // DB UUID in students table
   email: string;
-  batchId: string;
-  sectionId: string;
-  password: string;
-  faceRegistered: boolean;
+  batchId?: string;
+  sectionId?: string;
+  section_id?: string; // DB UUID
+  password?: string;
+  faceRegistered?: boolean;
+  face_registered?: boolean;
   faceEmbedding?: number[];
-  isActive: boolean;
+  face_embedding?: number[];
+  isActive?: boolean;
+  is_active?: boolean;
   createdAt: string;
+  teacher_id?: never; // For union type safety
 }
 
 export interface Teacher {
   id: string;
   name: string;
-  teacherId: string;
+  teacherId?: string;
+  teacher_id?: string; // DB UUID in teachers table
   email: string;
-  departmentId: string;
-  password: string;
-  assignments: TeachingAssignment[];
-  isActive: boolean;
+  departmentId?: string;
+  faculty_id?: string;
+  employee_id?: string;
+  password?: string;
+  assignments?: TeachingAssignment[];
+  isActive?: boolean;
+  is_active?: boolean;
   createdAt: string;
+  student_id?: never; // For union type safety
 }
 
 export interface Admin {
   id: string;
   email: string;
-  password: string;
   name: string;
+  password?: string;
+  student_id?: never;
+  teacher_id?: never;
 }
 
 export interface Routine {

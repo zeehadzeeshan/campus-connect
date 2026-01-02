@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Eye, EyeOff, Shield } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -16,6 +17,55 @@ const AdminLogin = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [isDataLoading, setIsDataLoading] = useState(false); // For consistency with diagnostics
+
+  const manualTest = async () => {
+    console.log('🧪 Running manual connection test (Admin)...');
+    try {
+      const result = await supabase.from('faculties').select('*', { count: 'exact', head: true });
+      if (result.error) toast({ title: 'DB Connection Failed', description: result.error.message, variant: 'destructive' });
+      else toast({ title: 'DB Connection OK', description: 'Database is reachable.' });
+
+      const authUrl = `${import.meta.env.VITE_SUPABASE_URL}/auth/v1/health`;
+      console.log('🔗 1. Pinging Health:', authUrl);
+      const ping: any = await Promise.race([
+        fetch(authUrl),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Health ping timeout')), 5000))
+      ]).catch(err => ({ ok: false, status: 0, statusText: err.message }));
+
+      console.log('🔗 Health Result:', ping.status, ping.ok ? 'OK' : 'FAIL', ping.statusText || '');
+
+      const tokenUrl = `${import.meta.env.VITE_SUPABASE_URL}/auth/v1/token?grant_type=password`;
+      console.log('🔗 2. Testing POST (Direct Token API):', tokenUrl);
+      const postTest: any = await Promise.race([
+        fetch(tokenUrl, {
+          method: 'POST',
+          headers: { 'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: 'test@ping.com', password: 'ping' })
+        }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('POST test timeout')), 5000))
+      ]).catch(err => ({ ok: false, status: 0, statusText: err.message }));
+
+      console.log('🔗 POST Result:', postTest.status, postTest.statusText || '');
+
+      const { data, error: authErr } = await supabase.auth.getSession().catch(err => ({ data: null, error: err }));
+      console.log('🔗 Client Session Check:', authErr ? 'ERROR' : 'OK', authErr?.message || '');
+
+      if (ping.ok || postTest.status === 400 || postTest.status === 401) {
+        toast({ title: 'System Reachable', description: 'Network passed deep tests.' });
+      } else {
+        const reason = postTest.status === 0 ? "Network Blocked/Timeout" : `Error ${postTest.status}`;
+        toast({
+          title: 'Connection Issue',
+          description: `Direct check failed (${reason}). Your project might be paused or internet restricted.`,
+          variant: 'destructive'
+        });
+      }
+    } catch (e: any) {
+      console.error('❌ Test failed:', e);
+      toast({ title: 'System Error', description: e.message, variant: 'destructive' });
+    }
+  };
 
   useEffect(() => {
     setSelectedRole('admin');
@@ -30,27 +80,52 @@ const AdminLogin = () => {
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
+    console.log('🔑 Admin login attempt:', email);
 
-    const result = await login(email, password);
+    try {
+      const result = await login(email, password);
+      console.log('🔑 result:', result);
 
-    if (result.success) {
+      if (result.success) {
+        toast({
+          title: 'Admin login successful',
+          description: 'Welcome, Administrator!',
+        });
+      } else {
+        toast({
+          title: 'Login failed',
+          description: result.error,
+          variant: 'destructive',
+        });
+      }
+    } catch (error: any) {
+      console.error('❌ Admin login exception:', error);
       toast({
-        title: 'Admin login successful',
-        description: 'Welcome, Administrator!',
-      });
-    } else {
-      toast({
-        title: 'Login failed',
-        description: result.error,
+        title: 'Unexpected error',
+        description: error.message || 'Check console for details',
         variant: 'destructive',
       });
+    } finally {
+      setIsLoading(false);
     }
-
-    setIsLoading(false);
   };
 
   return (
-    <div className="min-h-screen bg-background flex items-center justify-center p-4">
+    <div className="min-h-screen bg-background flex flex-col items-center justify-center p-4">
+      {/* Debug Info */}
+      <div className="mb-4 p-2 text-[10px] font-mono bg-muted rounded border max-w-sm w-full relative">
+        <button
+          onClick={manualTest}
+          className="absolute right-2 top-2 px-2 py-1 bg-destructive text-destructive-foreground rounded hover:bg-destructive/90 text-[8px] uppercase font-bold"
+        >
+          Check API
+        </button>
+        <p>Supabase URL: {import.meta.env.VITE_SUPABASE_URL?.split('//')[1]?.split('.')[0] || 'MISSING'}.supabase.co</p>
+        <p>Key Format: {import.meta.env.VITE_SUPABASE_ANON_KEY?.startsWith('eyJ') ? '✅ Valid' : '❌ INVALID'}</p>
+        <p>Network: {window.location.hostname === 'localhost' ? '✅ Localhost' : '⚠️ Non-localhost'}</p>
+        <p>Status: {isAuthenticated ? 'Authenticated' : 'Not Logged In'}</p>
+      </div>
+
       <div className="w-full max-w-md animate-fade-in">
         <Button
           variant="ghost"

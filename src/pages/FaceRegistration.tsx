@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Camera, CheckCircle, RefreshCw, AlertCircle, XCircle } from 'lucide-react';
 import * as faceapi from 'face-api.js';
@@ -17,7 +17,8 @@ const FaceRegistration = () => {
   const [captureCount, setCaptureCount] = useState(0);
   const [currentInstruction, setCurrentInstruction] = useState('');
   const [showFlash, setShowFlash] = useState(false);
-  const [videoRef, setVideoRef] = useState<HTMLVideoElement | null>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
   const [embeddings, setEmbeddings] = useState<Float32Array[]>([]);
   const [modelsLoaded, setModelsLoaded] = useState(false);
 
@@ -66,7 +67,7 @@ const FaceRegistration = () => {
       navigator.mediaDevices.getUserMedia({ video: true })
         .then(s => {
           stream = s;
-          if (videoRef) videoRef.srcObject = s;
+          if (videoRef.current) videoRef.current.srcObject = s;
         })
         .catch(err => {
           console.error("Webcam error:", err);
@@ -76,14 +77,14 @@ const FaceRegistration = () => {
     return () => {
       if (stream) stream.getTracks().forEach(track => track.stop());
     };
-  }, [stage, videoRef, modelsLoaded]);
+  }, [stage, modelsLoaded]);
 
   const captureFace = async () => {
-    if (!videoRef || !modelsLoaded) return;
+    if (!videoRef.current || !modelsLoaded) return;
 
     try {
       const detection = await faceapi
-        .detectSingleFace(videoRef, new faceapi.TinyFaceDetectorOptions())
+        .detectSingleFace(videoRef.current, new faceapi.TinyFaceDetectorOptions())
         .withFaceLandmarks(true)
         .withFaceDescriptor();
 
@@ -92,13 +93,41 @@ const FaceRegistration = () => {
         setCaptureCount(prev => prev + 1);
         setShowFlash(true);
         setTimeout(() => setShowFlash(false), 200);
-      } else {
-        console.warn("No face detected");
+        return true;
       }
     } catch (error) {
       console.error("Capture error:", error);
     }
+    return false;
   };
+
+  // Tracking loop for visual feedback
+  useEffect(() => {
+    let active = true;
+    const track = async () => {
+      if (!videoRef.current || !canvasRef.current || !modelsLoaded || stage !== 'capturing') return;
+
+      const detection = await faceapi.detectSingleFace(videoRef.current, new faceapi.TinyFaceDetectorOptions()).withFaceLandmarks(true);
+
+      if (active && canvasRef.current && videoRef.current) {
+        const displaySize = { width: videoRef.current.offsetWidth, height: videoRef.current.offsetHeight };
+        faceapi.matchDimensions(canvasRef.current, displaySize);
+
+        if (detection) {
+          const resizedDetections = faceapi.resizeResults(detection, displaySize);
+          canvasRef.current.getContext('2d')?.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+          faceapi.draw.drawDetections(canvasRef.current, resizedDetections);
+        } else {
+          canvasRef.current.getContext('2d')?.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+        }
+      }
+
+      if (active) requestAnimationFrame(track);
+    };
+
+    if (stage === 'capturing') track();
+    return () => { active = false; };
+  }, [stage, modelsLoaded]);
 
   useEffect(() => {
     if (stage === 'capturing') {
@@ -183,13 +212,16 @@ const FaceRegistration = () => {
               )}
 
               {(stage === 'intro' || stage === 'capturing' || stage === 'processing') && (
-                <video
-                  ref={setVideoRef}
-                  autoPlay
-                  muted
-                  playsInline
-                  className="absolute inset-0 w-full h-full object-cover scale-x-[-1]"
-                />
+                <>
+                  <video
+                    ref={videoRef}
+                    autoPlay
+                    muted
+                    playsInline
+                    className="absolute inset-0 w-full h-full object-cover scale-x-[-1]"
+                  />
+                  <canvas ref={canvasRef} className="absolute inset-0 w-full h-full pointer-events-none" />
+                </>
               )}
 
               {(stage === 'capturing' || stage === 'processing') && (

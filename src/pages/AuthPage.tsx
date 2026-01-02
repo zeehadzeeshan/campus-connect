@@ -103,11 +103,44 @@ const AuthPage = () => {
     // Test Auth endpoint connectivity
     console.log('🧪 Testing Auth Connection...');
     try {
-      const { error: authErr } = await supabase.auth.getSession();
-      if (authErr) console.error('🧪 Auth Error:', authErr);
-      else console.log('✅ Auth Service Reachable');
-    } catch (e) {
-      console.error('❌ Auth Service Unreachable:', e);
+      const authUrl = `${import.meta.env.VITE_SUPABASE_URL}/auth/v1/health`;
+      console.log('🔗 1. Pinging Health:', authUrl);
+      const ping: any = await Promise.race([
+        fetch(authUrl),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Health ping timeout')), 5000))
+      ]).catch(err => ({ ok: false, status: 0, statusText: err.message }));
+
+      console.log('🔗 Health Result:', ping.status, ping.ok ? 'OK' : 'FAIL', ping.statusText || '');
+
+      const tokenUrl = `${import.meta.env.VITE_SUPABASE_URL}/auth/v1/token?grant_type=password`;
+      console.log('🔗 2. Testing POST (Direct Token API):', tokenUrl);
+      const postTest: any = await Promise.race([
+        fetch(tokenUrl, {
+          method: 'POST',
+          headers: { 'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: 'test@ping.com', password: 'ping' })
+        }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('POST test timeout')), 5000))
+      ]).catch(err => ({ ok: false, status: 0, statusText: err.message }));
+
+      console.log('🔗 POST Result:', postTest.status, postTest.statusText || '');
+
+      const { data, error: authErr } = await supabase.auth.getSession().catch(err => ({ data: null, error: err }));
+      console.log('🔗 Client Session Check:', authErr ? 'ERROR' : 'OK', authErr?.message || '');
+
+      if (ping.ok || postTest.status === 400 || postTest.status === 401) {
+        toast({ title: 'Network OK', description: 'Supabase Auth is reachable.' });
+      } else {
+        const reason = postTest.status === 0 ? "Network Blocked/Timeout" : `Error ${postTest.status}`;
+        toast({
+          title: 'Connection Issue',
+          description: `Direct check failed (${reason}). Your project might be paused or internet restricted.`,
+          variant: 'destructive'
+        });
+      }
+    } catch (e: any) {
+      console.error('❌ Deep Test Failed:', e);
+      toast({ title: 'System Error', description: e.message, variant: 'destructive' });
     }
 
     // Also try to reload the full data
@@ -313,7 +346,8 @@ const AuthPage = () => {
           Test Connection
         </button>
         <p>Project URL: {import.meta.env.VITE_SUPABASE_URL?.includes('placeholder') ? '⚠️ USING PLACEHOLDER' : (import.meta.env.VITE_SUPABASE_URL || '❌ MISSING')}</p>
-        <p>Key Format: {import.meta.env.VITE_SUPABASE_ANON_KEY?.startsWith('eyJ') ? '✅ Valid (JWT)' : '❌ INVALID (Must start with eyJ)'}</p>
+        <p>Key Format: {import.meta.env.VITE_SUPABASE_ANON_KEY?.startsWith('eyJ') ? '✅ Valid (JWT)' : '❌ INVALID'}</p>
+        <p>Network context: {window.location.hostname === 'localhost' ? '✅ Localhost' : '⚠️ Non-localhost (May block Auth)'}</p>
         <p>Connection: {faculties.length > 0 || batches.length > 0 ? '✅ Connected' : '⚠️ Warning (Check DB)'}</p>
         <p>Stats: {faculties.length} F, {batches.length} B, {sections.length} S</p>
         {!isDataLoading && faculties.length === 0 && (

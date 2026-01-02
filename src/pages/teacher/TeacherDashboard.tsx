@@ -17,7 +17,11 @@ const TeacherDashboard = () => {
     const [isLoading, setIsLoading] = useState(true);
 
     const fetchData = async () => {
-        if (!user?.id) return;
+        if (!user?.teacher_id) {
+            console.warn('⚠️ Dashboard: No teacher_id found in user context');
+            setIsLoading(false);
+            return;
+        }
         setIsLoading(true);
         try {
             const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -25,8 +29,8 @@ const TeacherDashboard = () => {
 
             // 1. Get Teacher Assignments & Routine
             const [myRoutines, allAssignments] = await Promise.all([
-                api.getRoutines({ teacher_id: user.id, day: today }),
-                api.getTeacherAssignments(user.id)
+                api.getRoutines({ teacher_id: user.teacher_id, day: today }),
+                api.getTeacherAssignments(user.teacher_id)
             ]);
 
             // 2. Count attendance logs for today (simulated or real query)
@@ -52,7 +56,7 @@ const TeacherDashboard = () => {
 
     useEffect(() => {
         fetchData();
-    }, [user?.id]);
+    }, [user?.teacher_id]);
 
     return (
         <div className="space-y-6">
