@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { Camera, CheckCircle, AlertCircle, RefreshCw, UserCheck } from "lucide-react";
+import { Camera, CheckCircle, AlertCircle, RefreshCw, UserCheck, XCircle, FileUp, Layers } from "lucide-react";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
 import * as faceapi from 'face-api.js';
@@ -37,6 +37,10 @@ const TakeAttendance = () => {
     const [detectedCount, setDetectedCount] = useState(0);
     const [recognizedCount, setRecognizedCount] = useState(0);
     const [totalStudents, setTotalStudents] = useState(0);
+
+    // Batch Capture State
+    const [capturedImages, setCapturedImages] = useState<{ id: number, url: string, blob: Blob }[]>([]);
+    const [isProcessingBatch, setIsProcessingBatch] = useState(false);
 
     const videoRef = useRef<HTMLVideoElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -100,43 +104,131 @@ const TakeAttendance = () => {
     const recognizedStudentsRef = useRef<Set<string>>(new Set());
     const knownEmbeddingsRef = useRef<Record<string, number[]>>({});
 
+    // Add image to batch (from Upload)
     const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0];
         if (!file) return;
 
-        try {
-            toast.info("Analyzing uploaded image...");
-            const result = await api.recognizeFaces(file, knownEmbeddingsRef.current);
-
-            setDetectedCount(result.detected_faces || 0);
-
-            if (result.matches && result.matches.length > 0) {
-                let newMatches = 0;
-                result.matches.forEach((match: any) => {
-                    if (!recognizedStudentsRef.current.has(match.student_id)) {
-                        console.log(`✅ Matched via Upload: ${match.student_id}`);
-                        recognizedStudentsRef.current.add(match.student_id);
-                        newMatches++;
-                    }
-                });
-                setRecognizedCount(recognizedStudentsRef.current.size);
-
-                if (newMatches > 0) {
-                    toast.success(`Found ${newMatches} new student(s)!`);
-                } else {
-                    toast.info("Faces detected, but already marked present.");
-                }
-            } else {
-                toast.warning("No known students recognized in image.");
-            }
-        } catch (error) {
-            console.error("Upload recognition error:", error);
-            toast.error("Failed to analyze image");
-        }
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const dataUrl = e.target?.result as string;
+            setCapturedImages(prev => [
+                ...prev,
+                { id: Date.now(), url: dataUrl, blob: file }
+            ]);
+            toast.success("Image added to batch");
+        };
+        reader.readAsDataURL(file);
 
         // Reset input
         event.target.value = '';
     };
+
+    // Capture current frame and add to batch
+    const captureFrameToBatch = async () => {
+        if (!videoRef.current) return;
+
+        const canvas = document.createElement('canvas');
+        canvas.width = videoRef.current.videoWidth;
+        canvas.height = videoRef.current.videoHeight;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+
+        ctx.drawImage(videoRef.current, 0, 0);
+
+        // Flash effect
+        const flash = document.createElement('div');
+        flash.className = "absolute inset-0 bg-white/50 z-50 transition-opacity duration-200";
+        videoRef.current.parentElement?.appendChild(flash);
+        setTimeout(() => flash.classList.add('opacity-0'), 50);
+        setTimeout(() => flash.remove(), 250);
+
+        canvas.toBlob((blob) => {
+            if (blob) {
+                const url = URL.createObjectURL(blob);
+                setCapturedImages(prev => [...prev, { id: Date.now(), url, blob }]);
+                toast.success("Frame captured");
+            }
+        }, 'image/jpeg', 0.8);
+    };
+
+    const removeImage = (id: number) => {
+        setCapturedImages(prev => prev.filter(img => img.id !== id));
+    };
+
+    // Process ALL images in the batch
+    const processBatch = async () => {
+        if (capturedImages.length === 0) {
+            toast.warning("No images to process");
+            return;
+        }
+
+        setIsProcessingBatch(true);
+        const uniqueRecognized = new Set<string>(recognizedStudentsRef.current); // Start with existing
+        let totalDetected = 0;
+        let newMatchesCount = 0;
+
+        try {
+            toast.info(`Processing ${capturedImages.length} images...`);
+
+            for (const img of capturedImages) {
+                try {
+                    const result = await api.recognizeFaces(img.blob, knownEmbeddingsRef.current);
+                    totalDetected += (result.detected_faces || 0);
+
+                    if (result.matches && result.matches.length > 0) {
+                        result.matches.forEach((match: any) => {
+                            if (!uniqueRecognized.has(match.student_id)) {
+                                uniqueRecognized.add(match.student_id);
+                                newMatchesCount++;
+                            }
+                        });
+                    }
+                } catch (e) {
+                    console.error("Error processing batch image:", e);
+                }
+            }
+
+            // Update Global State
+            recognizedStudentsRef.current = uniqueRecognized;
+            setRecognizedCount(uniqueRecognized.size);
+            setDetectedCount(totalDetected); // Shows total faces seen across all images
+
+            if (newMatchesCount > 0) {
+                toast.success(`Found ${newMatchesCount} new student(s) in batch!`);
+            } else {
+                toast.info("Processing complete. No new students found.");
+            }
+
+        } catch (error) {
+            toast.error("Error processing batch");
+        } finally {
+            setIsProcessingBatch(false);
+        }
+    };
+
+    // New Ref to store students for final mapping
+    const allStudentsRef = useRef<any[]>([]);
+
+    const finalizeAttendance = () => {
+        stopDetectionLoop();
+        const recognized = recognizedStudentsRef.current;
+        const students = allStudentsRef.current;
+
+        console.log(`📊 Recognition complete: ${recognized.size}/${students.length} students recognized`);
+
+        const finalAttendance = students.map((s: any) => ({
+            studentId: s.id,
+            name: s.profile?.name || "Unknown",
+            student_id: s.student_id,
+            status: recognized.has(s.id) ? 'present' as const : 'absent' as const,
+            confidence: recognized.has(s.id) ? 0.95 : 0
+        }));
+
+        setAttendanceData(finalAttendance);
+        setStep('verify');
+        toast.success(`Recognized ${recognized.size} out of ${students.length} students`);
+    }
 
     const startDetectionLoop = (students: any[]) => {
         if (!videoRef.current) return;
@@ -144,7 +236,11 @@ const TakeAttendance = () => {
         setDetectedCount(0);
         setRecognizedCount(0);
         setTotalStudents(students.length);
+        setTotalStudents(students.length);
+        // We DO NOT reset recognizedStudentsRef here if coming from a "resume scan" scenario, 
+        // but typically we start fresh. Let's keep it fresh for now.
         recognizedStudentsRef.current = new Set();
+        setCapturedImages([]); // Reset batch on new scan start
 
         // Filter students with valid embeddings
         const studentsWithEmbeddings = students.filter(s => {
@@ -225,25 +321,7 @@ const TakeAttendance = () => {
             }
         }, 500);
 
-        // Auto-complete after 10 seconds of scanning
-        setTimeout(() => {
-            stopDetectionLoop();
-
-            const recognized = recognizedStudentsRef.current;
-            console.log(`📊 Recognition complete: ${recognized.size}/${students.length} students recognized`);
-
-            const finalAttendance = students.map((s: any) => ({
-                studentId: s.id,
-                name: s.profile?.name || "Unknown",
-                student_id: s.student_id,
-                status: recognized.has(s.id) ? 'present' as const : 'absent' as const,
-                confidence: recognized.has(s.id) ? 0.95 : 0
-            }));
-
-            setAttendanceData(finalAttendance);
-            setStep('verify');
-            toast.success(`Recognized ${recognized.size} out of ${students.length} students`);
-        }, 10000);
+        // Auto-complete timeout REMOVED to allow manual batch processing
     };
 
     const stopDetectionLoop = () => {
@@ -266,6 +344,7 @@ const TakeAttendance = () => {
 
         try {
             const students = await api.getStudentsBySection(selectedSectionId);
+            allStudentsRef.current = students; // Store for later
             setStep('camera');
 
             // Wait for video element to mount
@@ -413,13 +492,14 @@ const TakeAttendance = () => {
 
     if (step === 'camera') {
         return (
-            <div className="max-w-2xl mx-auto text-center space-y-6">
-                <div className="space-y-2">
-                    <h1 className="text-2xl font-bold">Scanning Class...</h1>
-                    <p className="text-muted-foreground">Keep the camera steady to detect students.</p>
+            <div className="max-w-2xl mx-auto space-y-6">
+                <div className="text-center space-y-2">
+                    <h1 className="text-2xl font-bold">Class Scan</h1>
+                    <p className="text-muted-foreground">Auto-scan is running. You can also capture/upload photos for better accuracy.</p>
                 </div>
 
-                <div className="relative aspect-video bg-black rounded-lg overflow-hidden border-4 border-primary/20">
+                {/* Main Camera View */}
+                <div className="relative aspect-video bg-black rounded-lg overflow-hidden border-4 border-primary/20 shadow-2xl">
                     <video
                         ref={videoRef}
                         autoPlay
@@ -433,50 +513,81 @@ const TakeAttendance = () => {
                         <div className="flex items-center justify-between text-white">
                             <div className="flex items-center gap-2">
                                 <div className="w-3 h-3 rounded-full bg-red-500 animate-pulse" />
-                                <span className="font-mono text-sm uppercase tracking-wider">Live Scanning</span>
+                                <span className="font-mono text-sm uppercase tracking-wider">Live</span>
                             </div>
                             <div className="flex items-center gap-4">
-                                <div className="flex items-center gap-2 bg-blue-500/20 px-3 py-1 rounded-full border border-blue-400/30">
-                                    <Camera className="w-4 h-4 text-blue-400" />
-                                    <span className="font-medium">{detectedCount} Faces</span>
-                                </div>
                                 <div className="flex items-center gap-2 bg-green-500/20 px-3 py-1 rounded-full border border-green-400/30">
                                     <UserCheck className="w-4 h-4 text-green-400" />
-                                    <span className="font-medium">{recognizedCount}/{totalStudents} Matched</span>
+                                    <span className="font-medium">{recognizedCount}/{totalStudents} Matches</span>
                                 </div>
                             </div>
                         </div>
                     </div>
+                </div>
 
-                    <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
-                        <div className="w-1/2 h-2/3 border-2 border-primary/30 rounded-lg flex items-center justify-center">
-                            <div className="w-full h-1 bg-primary/20 animate-scan shadow-[0_0_15px_rgba(var(--primary),0.5)]" />
+                {/* Batch Capture UI */}
+                <div className="space-y-4">
+                    {/* Thumbnail Strip */}
+                    {capturedImages.length > 0 && (
+                        <div className="flex gap-2 overflow-x-auto py-2 bg-muted/30 p-2 rounded-lg scrollbar-hide">
+                            {capturedImages.map((img, idx) => (
+                                <div key={img.id} className="relative w-24 h-16 rounded border overflow-hidden shrink-0 group">
+                                    <img src={img.url} className="w-full h-full object-cover" />
+                                    <button
+                                        onClick={() => removeImage(img.id)}
+                                        className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity"
+                                    >
+                                        <XCircle className="text-white w-6 h-6" />
+                                    </button>
+                                    <div className="absolute bottom-0 right-0 bg-primary text-primary-foreground text-[10px] px-1">
+                                        #{idx + 1}
+                                    </div>
+                                </div>
+                            ))}
                         </div>
-                    </div>
-                </div>
+                    )}
 
-                <div className="bg-muted/50 rounded-lg p-4">
-                    <div className="text-center">
-                        <p className="text-sm text-muted-foreground">Scanning will complete in 10 seconds...</p>
-                        <p className="text-lg font-semibold text-primary mt-1">{recognizedCount} students recognized so far</p>
-                    </div>
-                </div>
+                    {/* Controls */}
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                        <Button variant="secondary" onClick={captureFrameToBatch}>
+                            <Camera className="w-4 h-4 mr-2" />
+                            Snap Frame
+                        </Button>
 
-                <div className="flex justify-center gap-4">
-                    <div className="relative">
-                        <input
-                            type="file"
-                            accept="image/*"
-                            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                            onChange={handleFileUpload}
-                        />
-                        <Button variant="secondary">
-                            Upload Class Photo
+                        <div className="relative">
+                            <input type="file" accept="image/*" className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" onChange={handleFileUpload} />
+                            <Button variant="secondary" className="w-full">
+                                <FileUp className="w-4 h-4 mr-2" />
+                                Upload
+                            </Button>
+                        </div>
+
+                        <Button
+                            className="col-span-2"
+                            disabled={isProcessingBatch || capturedImages.length === 0}
+                            onClick={processBatch}
+                        >
+                            {isProcessingBatch ? <RefreshCw className="w-4 h-4 mr-2 animate-spin" /> : <Layers className="w-4 h-4 mr-2" />}
+                            Process Batch ({capturedImages.length})
                         </Button>
                     </div>
-                    <Button variant="outline" onClick={() => { stopDetectionLoop(); setStep('select'); }}>
-                        Cancel Scan
-                    </Button>
+
+                    <div className="h-px bg-border" />
+
+                    <div className="flex justify-between items-center bg-muted/50 p-4 rounded-lg">
+                        <div className="text-sm text-muted-foreground">
+                            Ready to finalize?
+                        </div>
+                        <div className="flex gap-2">
+                            <Button variant="outline" onClick={() => { stopDetectionLoop(); setStep('select'); }}>
+                                Cancel
+                            </Button>
+                            <Button size="lg" onClick={finalizeAttendance}>
+                                <CheckCircle className="w-5 h-5 mr-2" />
+                                Review Attendance
+                            </Button>
+                        </div>
+                    </div>
                 </div>
             </div>
         );

@@ -293,9 +293,10 @@ export const api = {
   },
 
   // Python Backend - Face Recognition API
+  // To switch back to local, change this to 'http://localhost:8000'
   registerFaceEmbedding: async (imageBlob: Blob) => {
-    const PYTHON_BACKEND = 'http://localhost:8000';
-    const TIMEOUT_MS = 30000; // 30 seconds timeout (OpenCV can be slow on first run)
+    const PYTHON_BACKEND = 'https://attendu-full-app.onrender.com';
+    const TIMEOUT_MS = 60000; // 60s timeout (Render cold starts can take 30-50s)
 
     try {
       const formData = new FormData();
@@ -321,8 +322,8 @@ export const api = {
       return result;
     } catch (error: any) {
       if (error.name === 'AbortError') {
-        console.error('Request timed out after 30s');
-        throw new Error('Connection timed out. Backend might be starting up or processing is too slow.');
+        console.error('Request timed out after 60s');
+        throw new Error('Connection timed out. Backend might be waking up from sleep (Render free tier). Please try again in 30 seconds.');
       }
       console.error('Error calling Python backend:', error);
       throw error;
@@ -330,7 +331,7 @@ export const api = {
   },
 
   recognizeFaces: async (imageBlob: Blob, knownEmbeddings: Record<string, number[]>) => {
-    const PYTHON_BACKEND = 'http://localhost:8000';
+    const PYTHON_BACKEND = 'https://attendu-full-app.onrender.com';
 
     try {
       const formData = new FormData();
@@ -356,7 +357,7 @@ export const api = {
   },
 
   verifyFace: async (imageBlob: Blob, knownEmbedding: number[]) => {
-    const PYTHON_BACKEND = 'http://localhost:8000';
+    const PYTHON_BACKEND = 'https://attendu-full-app.onrender.com';
 
     try {
       const formData = new FormData();
