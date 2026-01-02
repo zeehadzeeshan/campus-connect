@@ -11,6 +11,7 @@ interface AuthContextType extends AuthState {
   logout: () => void;
   pendingStudentId: string | null;
   setPendingStudentId: (id: string | null) => void;
+  completeFaceRegistration: (userId: string, embedding?: number[]) => Promise<{ success: boolean; error?: string }>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -101,23 +102,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback(async (email: string, password: string): Promise<{ success: boolean; error?: string }> => {
     try {
+      console.log('🔐 login start:', email);
       const { data, error } = await api.signIn(email, password);
-      if (error) throw error;
+      if (error) {
+        console.error('❌ login auth error:', error);
+        throw error;
+      }
+      console.log('✅ login auth success:', data.user?.id);
 
       // After successful auth, verify role if selectedRole was set
+      console.log('🔦 fetching profile for role check...');
       const { data: profile, error: profileError } = await supabase
         .from('profiles')
         .select('role')
         .eq('id', data.user.id)
         .single();
 
-      if (profileError) throw profileError;
+      if (profileError) {
+        console.error('❌ login profile fetch error:', profileError);
+        throw profileError;
+      }
+      console.log('✅ login profile found:', profile.role);
 
       if (selectedRole && profile.role !== selectedRole) {
+        console.warn('⚠️ login role mismatch:', { selectedRole, actualRole: profile.role });
         await api.signOut();
         return { success: false, error: `This account is not registered as a ${selectedRole}.` };
       }
 
+      console.log('🎉 login complete!');
       return { success: true };
     } catch (err: any) {
       return { success: false, error: err.message || 'Login failed' };
@@ -137,24 +150,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!userId) throw new Error("User creation failed");
 
       // 2. Create Profile
+      console.log('👤 profile insert:', { userId, email: data.email, role: data.role });
       const { error: profileError } = await supabase.from('profiles').insert([{
         id: userId,
         email: data.email,
         name: data.name,
         role: data.role
       }]);
-      if (profileError) throw profileError;
+      if (profileError) {
+        console.error('❌ profile insert error:', profileError);
+        throw profileError;
+      }
+      console.log('✅ profile insert success');
 
       // 3. Role specific tables
       if (data.role === 'student') {
-        const { error: studentError } = await supabase.from('students').insert([{
+        const studentObj = {
           profile_id: userId,
           student_id: data.studentId,
-          section_id: data.sectionId,
+          section_id: data.sectionId || data.section_id, // Support both naming styles
           face_registered: false,
           is_active: false
-        }]);
-        if (studentError) throw studentError;
+        };
+        console.log('👨‍🎓 student insert:', studentObj);
+        const { error: studentError } = await supabase.from('students').insert([studentObj]);
+        if (studentError) {
+          console.error('❌ student insert error:', studentError);
+          throw studentError;
+        }
+        console.log('✅ student insert success');
         setPendingStudentId(userId);
       } else if (data.role === 'teacher') {
         // Teacher assignments
@@ -182,6 +206,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setSelectedRole(null);
     setPendingStudentId(null);
   }, []);
+
+  const completeFaceStore = useCallback(async (userId: string, embedding?: number[]) => {
+    try {
+      await api.completeFaceRegistration(userId, embedding);
+
+      // Update local state if the user is currently logged in
+      if (user && user.id === userId) {
+        setUser({ ...user, face_registered: true, is_active: true });
+      }
+
+      return { success: true };
+    } catch (err: any) {
+      console.error("Face registration completion error:", err);
+      return { success: false, error: err.message || 'Failed to complete registration' };
+    }
+  }, [user]);
 
   if (loading) {
     return (
@@ -221,6 +261,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         logout,
         pendingStudentId,
         setPendingStudentId,
+        completeFaceRegistration: completeFaceStore,
       }}
     >
       {children}

@@ -11,6 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import { Badge } from '@/components/ui/badge';
+import { supabase } from '@/lib/supabase';
 
 const AuthPage = () => {
   const navigate = useNavigate();
@@ -18,7 +19,8 @@ const AuthPage = () => {
   const { toast } = useToast();
   const [activeTab, setActiveTab] = useState('login');
   const [showPassword, setShowPassword] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(false); // Used for form submissions
+  const [isDataLoading, setIsDataLoading] = useState(false); // Used for background data fetch
 
   // Registration Data
   const [faculties, setFaculties] = useState<any[]>([]);
@@ -50,23 +52,73 @@ const AuthPage = () => {
   // Load registration data
   useEffect(() => {
     const loadData = async () => {
+      setIsDataLoading(true);
       try {
+        console.log('🔄 Attempting to load registration data...');
         const [f, b, s, sub] = await Promise.all([
           api.getFaculties(),
           api.getBatches(),
           api.getSections(),
           api.getSubjects()
         ]);
+
+        console.log('✅ Diagnostic Load success:', {
+          faculties: f.length,
+          batches: b.length,
+          sections: s.length,
+          url: import.meta.env.VITE_SUPABASE_URL
+        });
+
         setFaculties(f);
         setBatches(b);
         setSections(s);
         setSubjects(sub);
-      } catch (e) {
-        toast({ title: 'Error', description: 'Failed to load registration data', variant: 'destructive' });
+      } catch (e: any) {
+        console.group('❌ Registration data load failed');
+        console.error('Error Object:', e);
+        console.error('Message:', e.message);
+        console.error('Details:', e.details);
+        console.error('Hint:', e.hint);
+        console.groupEnd();
+
+        toast({
+          title: 'Error loading data',
+          description: e.message || 'Check browser console for details.',
+          variant: 'destructive'
+        });
+      } finally {
+        setIsDataLoading(false);
       }
     };
     loadData();
   }, []);
+
+  const manualTest = async () => {
+    console.log('🧪 Running manual connection test...');
+    const result = await supabase.from('faculties').select('*');
+    console.log('🧪 Raw Result:', result);
+    if (result.error) toast({ title: 'Test Failed', description: result.error.message, variant: 'destructive' });
+    else toast({ title: 'Test Success', description: `Found ${result.data?.length} faculties` });
+
+    // Test Auth endpoint connectivity
+    console.log('🧪 Testing Auth Connection...');
+    try {
+      const { error: authErr } = await supabase.auth.getSession();
+      if (authErr) console.error('🧪 Auth Error:', authErr);
+      else console.log('✅ Auth Service Reachable');
+    } catch (e) {
+      console.error('❌ Auth Service Unreachable:', e);
+    }
+
+    // Also try to reload the full data
+    const [f, b, s, sub] = await Promise.all([
+      api.getFaculties().catch(() => []),
+      api.getBatches().catch(() => []),
+      api.getSections().catch(() => []),
+      api.getSubjects().catch(() => [])
+    ]);
+    setFaculties(f); setBatches(b); setSections(s); setSubjects(sub);
+  };
 
   // Redirect if no role selected
   useEffect(() => {
@@ -92,54 +144,76 @@ const AuthPage = () => {
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
+    console.log('🔑 Attempting login for:', loginEmail);
 
-    const result = await login(loginEmail, loginPassword);
+    try {
+      const result = await login(loginEmail, loginPassword);
+      console.log('🔑 Login result:', result);
 
-    if (result.success) {
+      if (result.success) {
+        toast({
+          title: 'Login successful',
+          description: 'Welcome back!',
+        });
+      } else {
+        toast({
+          title: 'Login failed',
+          description: result.error,
+          variant: 'destructive',
+        });
+      }
+    } catch (error: any) {
+      console.error('🔑 Login exception:', error);
       toast({
-        title: 'Login successful',
-        description: 'Welcome back!',
-      });
-    } else {
-      toast({
-        title: 'Login failed',
-        description: result.error,
+        title: 'Login error',
+        description: error.message || 'An unexpected error occurred',
         variant: 'destructive',
       });
+    } finally {
+      setIsLoading(false);
     }
-
-    setIsLoading(false);
   };
 
   const handleStudentSignup = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
+    console.log('📝 Attempting student signup for:', studentEmail);
 
-    const result = await signup({
-      role: 'student',
-      name: studentName,
-      studentId: studentId,
-      email: studentEmail,
-      batchId: studentBatch,
-      sectionId: studentSection,
-      password: studentPassword,
-    });
-
-    if (result.success) {
-      toast({
-        title: 'Account created',
-        description: 'Please complete face registration to activate your account.',
+    try {
+      const result = await signup({
+        role: 'student',
+        name: studentName,
+        studentId: studentId,
+        email: studentEmail,
+        batchId: studentBatch,
+        section_id: studentSection, // Match DB column name or handle in AuthContext
+        password: studentPassword,
       });
-      navigate('/face-registration');
-    } else {
+      console.log('📝 Signup result:', result);
+
+      if (result.success) {
+        toast({
+          title: 'Account created',
+          description: 'Please complete face registration to activate your account.',
+        });
+        navigate('/face-registration');
+      } else {
+        toast({
+          title: 'Signup failed',
+          description: result.error,
+          variant: 'destructive',
+        });
+      }
+    } catch (error: any) {
+      console.error('📝 Signup exception:', error);
       toast({
-        title: 'Signup failed',
-        description: result.error,
+        title: 'Signup error',
+        description: error.message || 'An unexpected error occurred',
         variant: 'destructive',
       });
+    } finally {
+      setIsLoading(false);
     }
-
-    setIsLoading(false);
   };
 
   const handleTeacherSignup = async (e: React.FormEvent) => {
@@ -229,7 +303,27 @@ const AuthPage = () => {
   if (!selectedRole) return null;
 
   return (
-    <div className="min-h-screen bg-background flex items-center justify-center p-4">
+    <div className="min-h-screen bg-background flex flex-col items-center justify-center p-4">
+      {/* Debug Info (Only visible if you know where to look, or for now, just visible for troubleshooting) */}
+      <div className="mb-4 p-2 text-[10px] font-mono bg-muted rounded border max-w-md w-full relative">
+        <button
+          onClick={manualTest}
+          className="absolute right-2 top-2 px-2 py-1 bg-primary text-primary-foreground rounded hover:bg-primary/90 text-[8px] uppercase font-bold"
+        >
+          Test Connection
+        </button>
+        <p>Project URL: {import.meta.env.VITE_SUPABASE_URL?.includes('placeholder') ? '⚠️ USING PLACEHOLDER' : (import.meta.env.VITE_SUPABASE_URL || '❌ MISSING')}</p>
+        <p>Key Format: {import.meta.env.VITE_SUPABASE_ANON_KEY?.startsWith('eyJ') ? '✅ Valid (JWT)' : '❌ INVALID (Must start with eyJ)'}</p>
+        <p>Connection: {faculties.length > 0 || batches.length > 0 ? '✅ Connected' : '⚠️ Warning (Check DB)'}</p>
+        <p>Stats: {faculties.length} F, {batches.length} B, {sections.length} S</p>
+        {!isDataLoading && faculties.length === 0 && (
+          <div className="mt-1 text-destructive font-bold uppercase space-y-1">
+            <p>1. Check browser console (F12) for error details.</p>
+            <p>2. Ensure .env has correct keys & restart server.</p>
+          </div>
+        )}
+      </div>
+
       <div className="w-full max-w-md animate-fade-in text-foreground">
         <Button
           variant="ghost"
@@ -333,14 +427,20 @@ const AuthPage = () => {
                       <Label>Faculty / Department</Label>
                       <Select value={studentFaculty} onValueChange={(v) => { setStudentFaculty(v); setStudentBatch(''); setStudentSection(''); }} required>
                         <SelectTrigger>
-                          <SelectValue placeholder="Select faculty" />
+                          <SelectValue placeholder={isDataLoading ? "Loading..." : "Select faculty"} />
                         </SelectTrigger>
                         <SelectContent>
-                          {faculties.map(f => (
-                            <SelectItem key={f.id} value={f.id}>
-                              {f.name}
+                          {faculties.length > 0 ? (
+                            faculties.map(f => (
+                              <SelectItem key={f.id} value={f.id}>
+                                {f.name}
+                              </SelectItem>
+                            ))
+                          ) : (
+                            <SelectItem value="none" disabled>
+                              No faculties found in database
                             </SelectItem>
-                          ))}
+                          )}
                         </SelectContent>
                       </Select>
                     </div>
@@ -354,7 +454,7 @@ const AuthPage = () => {
                           required
                         >
                           <SelectTrigger>
-                            <SelectValue placeholder="Select batch" />
+                            <SelectValue placeholder={isDataLoading ? "Loading..." : "Select batch"} />
                           </SelectTrigger>
                           <SelectContent>
                             {batches.filter(b => b.faculty_id === studentFaculty).map(batch => (
@@ -374,7 +474,7 @@ const AuthPage = () => {
                           required
                         >
                           <SelectTrigger>
-                            <SelectValue placeholder="Select section" />
+                            <SelectValue placeholder={isDataLoading ? "Loading..." : "Select section"} />
                           </SelectTrigger>
                           <SelectContent>
                             {studentSections.map(section => (
@@ -445,11 +545,17 @@ const AuthPage = () => {
                           <SelectValue placeholder="Select faculty" />
                         </SelectTrigger>
                         <SelectContent>
-                          {faculties.map(f => (
-                            <SelectItem key={f.id} value={f.id}>
-                              {f.name}
+                          {faculties.length > 0 ? (
+                            faculties.map(f => (
+                              <SelectItem key={f.id} value={f.id}>
+                                {f.name}
+                              </SelectItem>
+                            ))
+                          ) : (
+                            <SelectItem value="none" disabled>
+                              No faculties found in database
                             </SelectItem>
-                          ))}
+                          )}
                         </SelectContent>
                       </Select>
                     </div>

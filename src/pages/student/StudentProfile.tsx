@@ -1,13 +1,16 @@
 import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { api } from "@/services/api";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { User, Mail, Hash, Book, Layers, CheckCircle, XCircle, ScanFace } from "lucide-react";
 import { toast } from "sonner";
 
 const StudentProfile = () => {
-    const { user } = useAuth();
+    const navigate = useNavigate();
+    const { user, setPendingStudentId, setSelectedRole } = useAuth();
     const [student, setStudent] = useState<any>(null);
     const [isLoading, setIsLoading] = useState(true);
 
@@ -26,6 +29,14 @@ const StudentProfile = () => {
         };
         fetchProfile();
     }, [user?.id]);
+
+    const handleRegisterFace = () => {
+        if (user?.id) {
+            setPendingStudentId(user.id);
+            setSelectedRole('student');
+            navigate("/face-registration");
+        }
+    };
 
     if (isLoading) return <div className="py-12 text-center text-muted-foreground">Loading profile...</div>;
     if (!student) return <div className="py-12 text-center text-muted-foreground">Student record not found. Please contact administrator.</div>;
@@ -118,6 +129,15 @@ const StudentProfile = () => {
                                     <h3 className="font-medium text-lg text-green-700">Registration Complete</h3>
                                     <p className="text-sm text-green-600">Your face data is active for attendance.</p>
                                 </div>
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="mt-2"
+                                    onClick={handleRegisterFace}
+                                >
+                                    <ScanFace className="w-4 h-4 mr-2" />
+                                    Update Face Scan
+                                </Button>
                             </div>
                         ) : (
                             <div className="text-center space-y-3">
@@ -126,8 +146,15 @@ const StudentProfile = () => {
                                 </div>
                                 <div>
                                     <h3 className="font-medium text-lg text-red-700">Not Registered</h3>
-                                    <p className="text-sm text-red-600">Please contact admin to register your face.</p>
+                                    <p className="text-sm text-red-600">Please register your face to enable attendance.</p>
                                 </div>
+                                <Button
+                                    className="mt-2"
+                                    onClick={handleRegisterFace}
+                                >
+                                    <ScanFace className="w-5 h-5 mr-2" />
+                                    Register My Face
+                                </Button>
                             </div>
                         )}
                     </CardContent>

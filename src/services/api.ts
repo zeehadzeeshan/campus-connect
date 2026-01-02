@@ -153,6 +153,18 @@ export const api = {
     return data;
   },
 
+  completeFaceRegistration: async (userId: string, embedding?: number[]) => {
+    const { error } = await supabase
+      .from('students')
+      .update({
+        face_registered: true,
+        is_active: true,
+        face_embedding: embedding ? JSON.stringify(embedding) : null
+      })
+      .eq('profile_id', userId);
+    if (error) throw error;
+  },
+
   // Routines
   getRoutines: async (filters?: { teacher_id?: string; day?: string }) => {
     let query = supabase.from('routines').select(`
