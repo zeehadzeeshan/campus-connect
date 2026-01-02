@@ -290,5 +290,94 @@ export const api = {
       totalSubjects: subjects.count || 0,
       todaySessions: routines.count || 0,
     };
+  },
+
+  // Python Backend - Face Recognition API
+  registerFaceEmbedding: async (imageBlob: Blob) => {
+    const PYTHON_BACKEND = 'http://localhost:8000';
+    const TIMEOUT_MS = 30000; // 30 seconds timeout (OpenCV can be slow on first run)
+
+    try {
+      const formData = new FormData();
+      formData.append('image', imageBlob, 'face.jpg');
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS);
+
+      const response = await fetch(`${PYTHON_BACKEND}/api/face/register`, {
+        method: 'POST',
+        body: formData,
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.detail || 'Face registration failed');
+      }
+
+      const result = await response.json();
+      return result;
+    } catch (error: any) {
+      if (error.name === 'AbortError') {
+        console.error('Request timed out after 30s');
+        throw new Error('Connection timed out. Backend might be starting up or processing is too slow.');
+      }
+      console.error('Error calling Python backend:', error);
+      throw error;
+    }
+  },
+
+  recognizeFaces: async (imageBlob: Blob, knownEmbeddings: Record<string, number[]>) => {
+    const PYTHON_BACKEND = 'http://localhost:8000';
+
+    try {
+      const formData = new FormData();
+      formData.append('image', imageBlob, 'capture.jpg');
+      formData.append('known_embeddings', JSON.stringify(knownEmbeddings));
+
+      const response = await fetch(`${PYTHON_BACKEND}/api/face/recognize`, {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.detail || 'Face recognition failed');
+      }
+
+      const result = await response.json();
+      return result;
+    } catch (error) {
+      console.error('Error calling Python backend:', error);
+      throw error;
+    }
+  },
+
+  verifyFace: async (imageBlob: Blob, knownEmbedding: number[]) => {
+    const PYTHON_BACKEND = 'http://localhost:8000';
+
+    try {
+      const formData = new FormData();
+      formData.append('image', imageBlob, 'verify.jpg');
+      formData.append('known_embedding', JSON.stringify(knownEmbedding));
+
+      const response = await fetch(`${PYTHON_BACKEND}/api/face/verify`, {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.detail || 'Face verification failed');
+      }
+
+      const result = await response.json();
+      return result;
+    } catch (error) {
+      console.error('Error calling Python backend:', error);
+      throw error;
+    }
   }
 };

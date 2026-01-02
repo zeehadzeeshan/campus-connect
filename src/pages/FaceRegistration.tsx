@@ -6,6 +6,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
+import { api } from '@/services/api';
 
 const TOTAL_CAPTURES = 3;
 const CAPTURE_INTERVAL = 1000;
@@ -13,14 +14,20 @@ const CAPTURE_INTERVAL = 1000;
 const FaceRegistration = () => {
   const navigate = useNavigate();
   const { pendingStudentId, completeFaceRegistration, selectedRole } = useAuth();
-  const [stage, setStage] = useState<'loading' | 'intro' | 'capturing' | 'processing' | 'success' | 'error' | 'insecure'>('loading');
+  const [stage, setStage] = useState<'loading' | 'intro' | 'capturing' | 'processing' | 'success' | 'error' | 'insecure'>('intro');
   const [captureCount, setCaptureCount] = useState(0);
   const [currentInstruction, setCurrentInstruction] = useState('');
   const [showFlash, setShowFlash] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [embeddings, setEmbeddings] = useState<Float32Array[]>([]);
-  const [modelsLoaded, setModelsLoaded] = useState(false);
+  /* 
+    BATCH CAPTURE LOGIC 
+    Captures 3 images first, then uploads them all
+  */
+  const [capturedImages, setCapturedImages] = useState<{ id: number, url: string, blob: Blob }[]>([]);
+  const [isUploading, setIsUploading] = useState(false);
+  const [embeddings, setEmbeddings] = useState<number[][]>([]);  // Kept for final processing logic
+  const [modelsLoaded, setModelsLoaded] = useState(true);
 
   const instructions = [
     'Look straight at the camera',
@@ -34,21 +41,21 @@ const FaceRegistration = () => {
     }
   }, [pendingStudentId, selectedRole, navigate]);
 
-  // Load Models
+  // Load Models for visual feedback only
   useEffect(() => {
     const loadModels = async () => {
       try {
         const MODEL_URL = '/models';
         await Promise.all([
           faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
-          faceapi.nets.faceLandmark68TinyNet.loadFromUri(MODEL_URL),
-          faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)
+          faceapi.nets.faceLandmark68TinyNet.loadFromUri(MODEL_URL)
         ]);
         setModelsLoaded(true);
-        setStage('intro');
+        console.log('✅ Face detection models loaded (for visual feedback only)');
       } catch (error) {
         console.error("Model loading error:", error);
-        setStage('error');
+        // Not critical - can still capture without visual feedback
+        setModelsLoaded(false);
       }
     };
     loadModels();
@@ -80,19 +87,32 @@ const FaceRegistration = () => {
   }, [stage, modelsLoaded]);
 
   const captureFace = async () => {
-    if (!videoRef.current || !modelsLoaded) return;
+    if (!videoRef.current || !canvasRef.current) return;
 
     try {
-      const detection = await faceapi
-        .detectSingleFace(videoRef.current, new faceapi.TinyFaceDetectorOptions())
-        .withFaceLandmarks(true)
-        .withFaceDescriptor();
+      // Capture image from video
+      const canvas = document.createElement('canvas');
+      canvas.width = videoRef.current.videoWidth;
+      canvas.height = videoRef.current.videoHeight;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return false;
 
-      if (detection) {
-        setEmbeddings(prev => [...prev, detection.descriptor]);
+      ctx.drawImage(videoRef.current, 0, 0);
+
+      // Convert to blob
+      const blob = await new Promise<Blob>((resolve) => {
+        canvas.toBlob((b) => resolve(b!), 'image/jpeg', 0.95);
+      });
+
+      // Send to Python backend for embedding extraction
+      const result = await api.registerFaceEmbedding(blob);
+
+      if (result.success && result.embedding) {
+        setEmbeddings(prev => [...prev, result.embedding]);
         setCaptureCount(prev => prev + 1);
         setShowFlash(true);
         setTimeout(() => setShowFlash(false), 200);
+        console.log(`✅ Captured face ${captureCount + 1}/${TOTAL_CAPTURES}`);
         return true;
       }
     } catch (error) {
@@ -129,34 +149,121 @@ const FaceRegistration = () => {
     return () => { active = false; };
   }, [stage, modelsLoaded]);
 
+
+
+  // Reset state when stage changes to capturing
   useEffect(() => {
     if (stage === 'capturing') {
-      if (captureCount < TOTAL_CAPTURES) {
-        setCurrentInstruction(instructions[captureCount]);
-        const timer = setTimeout(captureFace, CAPTURE_INTERVAL);
-        return () => clearTimeout(timer);
-      } else {
-        setStage('processing');
-        handleFinalize();
-      }
+      setCurrentInstruction(instructions[capturedImages.length]);
     }
-  }, [stage, captureCount]);
+  }, [stage, capturedImages]);
 
-  const handleFinalize = async () => {
-    if (embeddings.length === 0 || !pendingStudentId) {
-      setStage('error');
-      return;
-    }
+  const captureManual = async () => {
+    if (!videoRef.current || capturedImages.length >= TOTAL_CAPTURES) return;
+
+    // Create high-quality capture
+    const canvas = document.createElement('canvas');
+    canvas.width = videoRef.current.videoWidth;
+    canvas.height = videoRef.current.videoHeight;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    // Draw video frame to canvas
+    ctx.drawImage(videoRef.current, 0, 0);
+
+    // Get Data URL for preview
+    const dataUrl = canvas.toDataURL('image/jpeg');
+
+    // Get Blob for upload
+    canvas.toBlob((blob) => {
+      if (blob) {
+        setCapturedImages(prev => [
+          ...prev,
+          { id: Date.now(), url: dataUrl, blob: blob }
+        ]);
+      }
+    }, 'image/jpeg', 0.95);
+  };
+
+  const removeImage = (id: number) => {
+    setCapturedImages(prev => prev.filter(img => img.id !== id));
+  };
+
+  const handleScanAndSave = async () => {
+    if (capturedImages.length < TOTAL_CAPTURES) return;
+
+    setIsUploading(true);
+    setStage('processing');
 
     try {
-      // Average the embeddings for a more robust descriptor
-      const averageEmbedding = new Float32Array(128).fill(0);
-      embeddings.forEach(embedding => {
+      const newEmbeddings: number[][] = [];
+
+      // Process each image sequentially
+      for (let i = 0; i < capturedImages.length; i++) {
+        const img = capturedImages[i];
+        console.log(`Processing image ${i + 1}/${capturedImages.length} (Blob size: ${img.blob.size} bytes)...`);
+
+        try {
+          const result = await api.registerFaceEmbedding(img.blob);
+          if (result.success && result.embedding) {
+            console.log(`✅ Image ${i + 1} processed successfully.`);
+            newEmbeddings.push(result.embedding);
+          } else {
+            console.warn(`⚠️ Image ${i + 1} failed:`, result);
+          }
+        } catch (innerError: any) {
+          console.error(`❌ Error processing image ${i + 1}:`, innerError);
+          if (innerError.message.includes('timed out')) {
+            alert(`Image ${i + 1} timed out. The server might be busy or restarting.`);
+          }
+        }
+      }
+
+      console.log(`Processing complete. Success count: ${newEmbeddings.length}/${capturedImages.length}`);
+
+      if (newEmbeddings.length > 0) {
+        setEmbeddings(newEmbeddings);
+
+        if (newEmbeddings.length === capturedImages.length) {
+          // All good, finalize immediately
+          await finalizeWithEmbeddings(newEmbeddings);
+        } else {
+          // Some failed
+          alert(`Only ${newEmbeddings.length} of ${TOTAL_CAPTURES} faces were detected clearly. The rest failed or timed out. Please retake.`);
+          setStage('capturing'); // Go back to capturing
+          setIsUploading(false);
+          setCapturedImages([]);
+        }
+
+      } else {
+        alert("No faces successfully processed. Server might be down or no faces detected.");
+        setStage('capturing');
+        setCapturedImages([]);
+        setIsUploading(false);
+      }
+    } catch (error) {
+      console.error("Batch upload global error:", error);
+      alert("Critical error connecting to server.");
+      setStage('capturing');
+      setIsUploading(false);
+    }
+  };
+
+  // Direct finalization helper
+  const finalizeWithEmbeddings = async (finalEmbeddings: number[][]) => {
+    try {
+      // Average the embeddings
+      const embeddingLength = finalEmbeddings[0].length;
+      const averageEmbedding = new Array(embeddingLength).fill(0);
+
+      finalEmbeddings.forEach(embedding => {
         embedding.forEach((val, i) => averageEmbedding[i] += val);
       });
-      averageEmbedding.forEach((val, i) => averageEmbedding[i] /= embeddings.length);
+      averageEmbedding.forEach((val, i, arr) => arr[i] = val / finalEmbeddings.length);
 
-      const result = await completeFaceRegistration(pendingStudentId, Array.from(averageEmbedding));
+      console.log(`📊 Averaged ${finalEmbeddings.length} embeddings`);
+
+      const result = await completeFaceRegistration(pendingStudentId, averageEmbedding);
       if (result.success) {
         setStage('success');
       } else {
@@ -165,8 +272,12 @@ const FaceRegistration = () => {
     } catch (error) {
       console.error("Finalization error:", error);
       setStage('error');
+    } finally {
+      setIsUploading(false);
     }
   };
+
+
 
   const startCapture = () => {
     setCaptureCount(0);
@@ -184,25 +295,49 @@ const FaceRegistration = () => {
     setStage('intro');
   };
 
+  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    if (capturedImages.length >= TOTAL_CAPTURES) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const dataUrl = e.target?.result as string;
+      setCapturedImages(prev => [
+        ...prev,
+        { id: Date.now(), url: dataUrl, blob: file }
+      ]);
+    };
+    reader.readAsDataURL(file);
+
+    // Reset input
+    event.target.value = '';
+  };
+
   if (!pendingStudentId) return null;
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-4">
       <div className="w-full max-w-lg animate-fade-in">
         <Card className="border-2">
+          {/* ... Header ... */}
           <CardHeader className="text-center">
             <CardTitle className="text-2xl">Face Registration</CardTitle>
             <CardDescription>
               {stage === 'loading' && 'Loading AI Models...'}
               {stage === 'intro' && 'Position your face in the camera frame to register'}
-              {stage === 'capturing' && 'Hold still and follow the instructions'}
+              {stage === 'capturing' && capturedImages.length < TOTAL_CAPTURES && 'Align face and click Capture'}
+              {stage === 'capturing' && capturedImages.length >= TOTAL_CAPTURES && 'Review photos and click Scan & Save'}
               {stage === 'processing' && 'Processing your face data...'}
               {stage === 'success' && 'Face registration complete!'}
               {stage === 'error' && 'Registration failed. Please try again.'}
               {stage === 'insecure' && 'Camera access blocked by browser safety.'}
             </CardDescription>
           </CardHeader>
+
           <CardContent className="space-y-6">
+            {/* ... Video Area ... */}
             <div className="relative aspect-[4/3] bg-black rounded-lg overflow-hidden border-2 border-primary/20">
               {stage === 'loading' && (
                 <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
@@ -211,7 +346,8 @@ const FaceRegistration = () => {
                 </div>
               )}
 
-              {(stage === 'intro' || stage === 'capturing' || stage === 'processing') && (
+              {/* LIVE VIDEO VIEW (Always visible during capture) */}
+              {(stage === 'intro' || stage === 'capturing') && (
                 <>
                   <video
                     ref={videoRef}
@@ -223,18 +359,7 @@ const FaceRegistration = () => {
                   <canvas ref={canvasRef} className="absolute inset-0 w-full h-full pointer-events-none" />
                 </>
               )}
-
-              {(stage === 'capturing' || stage === 'processing') && (
-                <div className="absolute inset-0 pointer-events-none">
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <div className="w-48 h-64 border-4 border-primary/50 rounded-[50%] animate-pulse" />
-                  </div>
-                  {showFlash && (
-                    <div className="absolute inset-0 bg-white/50 animate-fade-in" />
-                  )}
-                </div>
-              )}
-
+              {/* ... other status states ... */}
               {stage === 'success' && (
                 <div className="absolute inset-0 flex flex-col items-center justify-center bg-background/80 text-center animate-slide-up">
                   <CheckCircle className="w-20 h-20 text-primary mx-auto mb-4" />
@@ -250,10 +375,13 @@ const FaceRegistration = () => {
                 </div>
               )}
 
+              {/* ... insecure state ... */}
               {stage === 'insecure' && (
                 <div className="absolute inset-0 flex flex-col items-center justify-center bg-background/95 text-center animate-slide-up p-6">
                   <XCircle className="w-16 h-16 text-destructive mx-auto mb-4" />
+                  {/* ... content ... */}
                   <p className="text-lg font-medium text-foreground">Security Block</p>
+                  {/* ... rest of insecure ... */}
                   <div className="text-sm text-muted-foreground mt-4 space-y-3 text-left">
                     <p>Browsers only allow camera access on <b>secure</b> connections.</p>
                     <p><b>How to fix:</b></p>
@@ -269,12 +397,37 @@ const FaceRegistration = () => {
               )}
             </div>
 
+            {/* THUMBNAIL STRIP */}
+            {stage === 'capturing' && capturedImages.length > 0 && (
+              <div className="flex gap-2 overflow-x-auto py-2">
+                {capturedImages.map((img, idx) => (
+                  <div key={img.id} className="relative w-20 h-20 rounded border overflow-hidden shrink-0 group">
+                    <img src={img.url} className="w-full h-full object-cover scale-x-[-1]" />
+                    <button
+                      onClick={() => removeImage(img.id)}
+                      className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity"
+                    >
+                      <XCircle className="text-white w-6 h-6" />
+                    </button>
+                    <div className="absolute bottom-0 right-0 bg-primary text-primary-foreground text-[10px] px-1">
+                      {idx + 1}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* INSTRUCTIONS */}
             {stage === 'capturing' && (
               <div className="text-center space-y-3 animate-fade-in">
-                <p className="text-lg font-medium text-foreground">{currentInstruction}</p>
-                <Progress value={(captureCount / TOTAL_CAPTURES) * 100} className="h-2" />
+                <p className="text-lg font-medium text-foreground">
+                  {capturedImages.length < TOTAL_CAPTURES
+                    ? instructions[capturedImages.length]
+                    : "Ready to Scan!"}
+                </p>
+                <Progress value={(capturedImages.length / TOTAL_CAPTURES) * 100} className="h-2" />
                 <p className="text-sm text-muted-foreground">
-                  Capture {captureCount} of {TOTAL_CAPTURES}
+                  Captured {capturedImages.length} of {TOTAL_CAPTURES}
                 </p>
               </div>
             )}
@@ -282,15 +435,44 @@ const FaceRegistration = () => {
             {stage === 'processing' && (
               <div className="text-center space-y-3 animate-fade-in">
                 <RefreshCw className="w-8 h-8 text-primary mx-auto animate-spin" />
-                <p className="text-muted-foreground">Analyzing face data and creating embeddings...</p>
+                <p className="text-muted-foreground">Scanning and verifying photos...</p>
               </div>
             )}
 
-            <div className="flex gap-3">
+            {/* ACTION BUTTONS */}
+            <div className="flex gap-3 flex-col sm:flex-row">
               {stage === 'intro' && (
                 <Button onClick={startCapture} className="w-full" size="lg" disabled={!modelsLoaded}>
                   <Camera className="w-5 h-5 mr-2" />
                   Start Face Scan
+                </Button>
+              )}
+
+              {stage === 'capturing' && capturedImages.length < TOTAL_CAPTURES && (
+                <>
+                  <Button onClick={captureManual} className="flex-1" size="lg">
+                    <Camera className="w-5 h-5 mr-2" />
+                    Capture Photo {capturedImages.length + 1}
+                  </Button>
+
+                  <div className="relative">
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                      onChange={handleFileUpload}
+                    />
+                    <Button variant="outline" size="lg" className="w-full sm:w-auto">
+                      Upload
+                    </Button>
+                  </div>
+                </>
+              )}
+
+              {stage === 'capturing' && capturedImages.length >= TOTAL_CAPTURES && (
+                <Button onClick={handleScanAndSave} className="w-full" size="lg" disabled={isUploading}>
+                  {isUploading ? <RefreshCw className="w-5 h-5 mr-2 animate-spin" /> : <CheckCircle className="w-5 h-5 mr-2" />}
+                  Scan & Save
                 </Button>
               )}
 

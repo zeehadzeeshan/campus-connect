@@ -93,17 +93,50 @@ const TakeAttendance = () => {
     const filteredSections = sections.filter(s => s.batch_id === selectedBatchId);
     const filteredSubjects = subjects.filter(sub => sub.section_id === selectedSectionId);
 
-    // Euclidean distance for face matching
-    const euclideanDistance = (a: Float32Array, b: number[]): number => {
-        let sum = 0;
-        for (let i = 0; i < a.length; i++) {
-            sum += Math.pow(a[i] - b[i], 2);
-        }
-        return Math.sqrt(sum);
-    };
-
-    const MATCH_THRESHOLD = 0.6; // Lower = stricter matching
+    // Not used anymore - recognition done on backend
+    // Kept for reference
+    // Kept for reference
+    const MATCH_THRESHOLD = 0.6;
     const recognizedStudentsRef = useRef<Set<string>>(new Set());
+    const knownEmbeddingsRef = useRef<Record<string, number[]>>({});
+
+    const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+
+        try {
+            toast.info("Analyzing uploaded image...");
+            const result = await api.recognizeFaces(file, knownEmbeddingsRef.current);
+
+            setDetectedCount(result.detected_faces || 0);
+
+            if (result.matches && result.matches.length > 0) {
+                let newMatches = 0;
+                result.matches.forEach((match: any) => {
+                    if (!recognizedStudentsRef.current.has(match.student_id)) {
+                        console.log(`✅ Matched via Upload: ${match.student_id}`);
+                        recognizedStudentsRef.current.add(match.student_id);
+                        newMatches++;
+                    }
+                });
+                setRecognizedCount(recognizedStudentsRef.current.size);
+
+                if (newMatches > 0) {
+                    toast.success(`Found ${newMatches} new student(s)!`);
+                } else {
+                    toast.info("Faces detected, but already marked present.");
+                }
+            } else {
+                toast.warning("No known students recognized in image.");
+            }
+        } catch (error) {
+            console.error("Upload recognition error:", error);
+            toast.error("Failed to analyze image");
+        }
+
+        // Reset input
+        event.target.value = '';
+    };
 
     const startDetectionLoop = (students: any[]) => {
         if (!videoRef.current) return;
@@ -120,7 +153,7 @@ const TakeAttendance = () => {
                 const embedding = typeof s.face_embedding === 'string'
                     ? JSON.parse(s.face_embedding)
                     : s.face_embedding;
-                return Array.isArray(embedding) && embedding.length === 128;
+                return Array.isArray(embedding) && embedding.length > 0;
             } catch {
                 return false;
             }
@@ -128,41 +161,59 @@ const TakeAttendance = () => {
 
         console.log(`🔍 Starting recognition with ${studentsWithEmbeddings.length}/${students.length} students having embeddings`);
 
+        // Build known embeddings dictionary
+        const knownEmbeddings: Record<string, number[]> = {};
+        studentsWithEmbeddings.forEach(s => {
+            const embedding = typeof s.face_embedding === 'string'
+                ? JSON.parse(s.face_embedding)
+                : s.face_embedding;
+            knownEmbeddings[s.id] = embedding;
+        });
+
+        // Store in ref for upload handler
+        knownEmbeddingsRef.current = knownEmbeddings;
+
         detectionInterval.current = setInterval(async () => {
             if (!videoRef.current || !canvasRef.current) return;
 
             try {
-                // Detect faces WITH descriptors for matching
-                const detections = await faceapi
-                    .detectAllFaces(videoRef.current, new faceapi.TinyFaceDetectorOptions())
-                    .withFaceLandmarks(true)
-                    .withFaceDescriptors();
+                // ... existing capture code ...
+                // Capture current video frame
+                const canvas = document.createElement('canvas');
+                canvas.width = videoRef.current.videoWidth;
+                canvas.height = videoRef.current.videoHeight;
+                const ctx = canvas.getContext('2d');
+                if (!ctx) return;
 
-                setDetectedCount(detections.length);
+                ctx.drawImage(videoRef.current, 0, 0);
 
-                // Match each detected face against student embeddings
-                for (const detection of detections) {
-                    const detectedDescriptor = detection.descriptor;
+                // Convert to blob
+                const blob = await new Promise<Blob>((resolve) => {
+                    canvas.toBlob((b) => resolve(b!), 'image/jpeg', 0.8);
+                });
 
-                    for (const student of studentsWithEmbeddings) {
-                        if (recognizedStudentsRef.current.has(student.id)) continue;
+                // Send to Python backend for recognition
+                const result = await api.recognizeFaces(blob, knownEmbeddings);
 
-                        const storedEmbedding = typeof student.face_embedding === 'string'
-                            ? JSON.parse(student.face_embedding)
-                            : student.face_embedding;
+                setDetectedCount(result.detected_faces || 0);
 
-                        const distance = euclideanDistance(detectedDescriptor, storedEmbedding);
-
-                        if (distance < MATCH_THRESHOLD) {
-                            console.log(`✅ Matched: ${student.profile?.name} (distance: ${distance.toFixed(3)})`);
-                            recognizedStudentsRef.current.add(student.id);
-                            setRecognizedCount(recognizedStudentsRef.current.size);
+                // Update recognized students
+                if (result.matches && result.matches.length > 0) {
+                    result.matches.forEach((match: any) => {
+                        if (!recognizedStudentsRef.current.has(match.student_id)) {
+                            console.log(`✅ Matched: ${match.student_id} (confidence: ${(match.confidence * 100).toFixed(1)}%)`);
+                            recognizedStudentsRef.current.add(match.student_id);
                         }
-                    }
+                    });
+                    setRecognizedCount(recognizedStudentsRef.current.size);
                 }
 
-                // Draw detection boxes on canvas
-                if (canvasRef.current && videoRef.current) {
+                // Optional: Draw detection boxes using face-api.js for visual feedback
+                if (modelsLoaded && canvasRef.current && videoRef.current) {
+                    const detections = await faceapi.detectAllFaces(
+                        videoRef.current,
+                        new faceapi.TinyFaceDetectorOptions()
+                    );
                     const displaySize = { width: videoRef.current.offsetWidth, height: videoRef.current.offsetHeight };
                     faceapi.matchDimensions(canvasRef.current, displaySize);
                     const resizedDetections = faceapi.resizeResults(detections, displaySize);
@@ -227,8 +278,9 @@ const TakeAttendance = () => {
                     }
                 } catch (err) {
                     console.error("Camera access error:", err);
-                    toast.error("Could not access camera");
-                    setStep('select');
+                    toast.error("Could not access camera (using generic fallback)");
+                    // Still start loop logic so upload works, but without stream
+                    startDetectionLoop(students);
                 }
             }, 100);
         } catch (e) {
@@ -236,6 +288,7 @@ const TakeAttendance = () => {
         }
     };
 
+    // ... toggleAttendance, handleSubmit, reset ...
     const toggleAttendance = (studentId: string) => {
         setAttendanceData(prev => prev.map(record =>
             record.studentId === studentId
@@ -278,6 +331,10 @@ const TakeAttendance = () => {
     };
 
     if (step === 'select') {
+        const filteredBatches = batches.filter(b => b.faculty_id === selectedFacultyId);
+        const filteredSections = sections.filter(s => s.batch_id === selectedBatchId);
+        const filteredSubjects = subjects.filter(sub => sub.section_id === selectedSectionId);
+
         return (
             <div className="max-w-xl mx-auto space-y-6">
                 <div className="text-center space-y-2">
@@ -406,6 +463,17 @@ const TakeAttendance = () => {
                 </div>
 
                 <div className="flex justify-center gap-4">
+                    <div className="relative">
+                        <input
+                            type="file"
+                            accept="image/*"
+                            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                            onChange={handleFileUpload}
+                        />
+                        <Button variant="secondary">
+                            Upload Class Photo
+                        </Button>
+                    </div>
                     <Button variant="outline" onClick={() => { stopDetectionLoop(); setStep('select'); }}>
                         Cancel Scan
                     </Button>
